@@ -1,0 +1,3141 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ianker 績效紀錄</title>
+<meta property="og:title" content="Ianker 績效紀錄" />
+<meta property="og:description" content="即時查看基金持倉、績效與獲利分配" />
+<meta property="og:image" content="https://raw.githubusercontent.com/ianlife4/fund-manager/main/cover.jpg" />
+<meta property="og:url" content="https://linjaian.netlify.app" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:title" content="Ianker 績效紀錄" />
+<meta property="og:description" content="即時查看基金持倉、績效與獲利分配" />
+<meta property="og:image" content="https://raw.githubusercontent.com/ianlife4/fund-manager/main/cover.jpg" />
+<meta property="og:url" content="https://linjaian.netlify.app" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script type="module">
+// ════════════════════════════════════════════
+// FIREBASE INIT
+// ════════════════════════════════════════════
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA9fZfRwFQjSN1CHc_PKyg6Hhvh1NT1Bk8",
+  authDomain: "iann-e95e1.firebaseapp.com",
+  projectId: "iann-e95e1",
+  storageBucket: "iann-e95e1.firebasestorage.app",
+  messagingSenderId: "35097233844",
+  appId: "1:35097233844:web:9c7a238792bdebd9c68ae1",
+  measurementId: "G-D6JZQZZ1FF"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+const DOC_REF = doc(db, 'fund', 'main');
+
+// 掛到 window 讓後面的 script 能用
+window._db = db;
+window._docRef = DOC_REF;
+window._setDoc = setDoc;
+window._onSnapshot = onSnapshot;
+window._getDoc = getDoc;
+window._firebaseReady = true;
+
+// 初始化 Firebase 連線後觸發 app init
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.initApp) window.initApp();
+});
+</script>
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #191c24;
+    --border: #252933;
+    --gold: #c9a84c;
+    --gold-dim: #8a6e2f;
+    --gold-glow: rgba(201,168,76,0.15);
+    --green: #3ecf8e;
+    --red: #f26e6e;
+    --blue: #5b9cf6;
+    --text: #e8eaf0;
+    --text-dim: #7a8099;
+    --text-muted: #454c63;
+    --mono: 'JetBrains Mono', monospace;
+    --serif: 'Playfair Display', serif;
+    --sans: 'Noto Sans TC', sans-serif;
+    /* 台股慣例：漲紅跌綠 */
+    --up: #f26e6e;
+    --down: #3ecf8e;
+  }
+
+  .positive { color: var(--up) !important; }
+  .negative { color: var(--down) !important; }
+  .neutral { color: var(--text-dim) !important; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── HEADER ── */
+  .header {
+    background: linear-gradient(135deg, #0f1219 0%, #0a0c10 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: var(--gold);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--serif);
+    font-size: 18px;
+    color: #0a0c10;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .fund-title { font-family: var(--serif); font-size: 20px; color: var(--gold); letter-spacing: 0.03em; }
+  .fund-subtitle { font-size: 11px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+  .header-date { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+
+  /* ── TABS ── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 32px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    font-family: var(--sans);
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+  /* ── MAIN ── */
+  .main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── SUMMARY CARDS ── */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+    opacity: 0.6;
+  }
+  .card-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+  }
+  .card-value {
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .card-value.positive { color: var(--green); }
+  .card-value.negative { color: var(--red); }
+  .card-change {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .card-change.up { color: var(--green); }
+  .card-change.down { color: var(--red); }
+
+  /* ── SECTION ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .section-title {
+    font-family: var(--serif);
+    font-size: 15px;
+    color: var(--gold);
+    letter-spacing: 0.02em;
+  }
+  .section-body { padding: 20px; }
+
+  /* ── BUTTONS ── */
+  .btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--sans);
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-gold {
+    background: var(--gold);
+    color: #0a0c10;
+    font-weight: 600;
+  }
+  .btn-gold:hover { background: #dbb85a; transform: translateY(-1px); }
+  .btn-outline {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .btn-outline:hover { border-color: var(--gold-dim); color: var(--gold); }
+  .btn-danger {
+    background: rgba(242,110,110,0.15);
+    color: var(--red);
+    border: 1px solid rgba(242,110,110,0.3);
+  }
+  .btn-danger:hover { background: rgba(242,110,110,0.25); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* ── TABLES ── */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  thead th {
+    text-align: right;
+    padding: 10px 14px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--sans);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  thead th:first-child { text-align: left; }
+  tbody tr {
+    border-bottom: 1px solid rgba(37,41,51,0.5);
+    transition: background 0.15s;
+  }
+  tbody tr:hover { background: rgba(201,168,76,0.04); }
+  tbody td {
+    padding: 11px 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  tbody td:first-child { text-align: left; }
+  .td-name { color: var(--text); font-weight: 600; font-family: var(--sans); }
+  .td-ticker { font-size: 11px; color: var(--gold); font-family: var(--mono); }
+  .positive { color: var(--green); }
+  .negative { color: var(--red); }
+  .neutral { color: var(--text-dim); }
+
+  /* ── WEIGHT BAR ── */
+  .weight-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  .weight-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+    min-width: 2px;
+  }
+  .weight-num { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+
+  /* ── FORMS ── */
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--sans);
+  }
+  .form-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+  .form-input:focus {
+    outline: none;
+    border-color: var(--gold-dim);
+    box-shadow: 0 0 0 3px var(--gold-glow);
+  }
+  .form-input::placeholder { color: var(--text-muted); }
+  select.form-input { cursor: pointer; }
+
+  /* ── CHART ── */
+  .chart-container { position: relative; height: 300px; }
+
+  /* ── PIE CHART ── */
+  .pie-wrap {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 24px;
+    align-items: center;
+  }
+  .pie-container { position: relative; height: 260px; }
+  .legend-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 10px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-name { font-size: 13px; color: var(--text); flex: 1; }
+  .legend-pct { font-family: var(--mono); font-size: 13px; color: var(--gold); }
+
+  /* ── BADGE ── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .badge-green { background: rgba(62,207,142,0.15); color: var(--green); }
+  .badge-red { background: rgba(242,110,110,0.15); color: var(--red); }
+  .badge-blue { background: rgba(91,156,246,0.15); color: var(--blue); }
+  .badge-gold { background: rgba(201,168,76,0.15); color: var(--gold); }
+
+  /* ── DIVIDER ── */
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+  /* ── ADD FORM PANEL ── */
+  .add-panel {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .add-panel-title {
+    font-size: 12px;
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 16px;
+  }
+
+  /* ── SNAPSHOT ROW ── */
+  .snapshot-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+  .snapshot-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .snapshot-date { color: var(--text-dim); font-size: 12px; }
+  .snapshot-nav { color: var(--gold); font-size: 15px; font-weight: 600; }
+  .snapshot-return { font-size: 12px; }
+
+  /* ── EMPTY STATE ── */
+  .empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    background: var(--surface2);
+    border: 1px solid var(--gold-dim);
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--gold);
+    z-index: 999;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ── ACCOUNT TABS ── */
+  .account-bar {
+    background: #080a0e;
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 38px;
+    overflow-x: auto;
+  }
+  .account-bar::-webkit-scrollbar { height: 2px; }
+  .acct-tab {
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 14px;
+    height: 30px;
+    border-radius: 6px 6px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+    position: relative;
+    top: 1px;
+  }
+  .acct-tab:hover { color: var(--text); background: var(--surface2); }
+  .acct-tab.active { background: var(--bg); color: var(--gold); border-color: var(--gold-dim); }
+  .acct-tab-name { outline: none; background: none; border: none; color: inherit; font-size: 12px; font-family: var(--sans); cursor: pointer; min-width: 20px; max-width: 120px; }
+  .acct-tab-close { font-size: 11px; opacity: 0.4; cursor: pointer; padding: 0 2px; }
+  .acct-tab-close:hover { opacity: 1; color: var(--red); }
+  .acct-add { background: none; border: 1px dashed var(--border); color: var(--text-muted); padding: 0 10px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; transition: all 0.15s; }
+  .acct-add:hover { border-color: var(--gold-dim); color: var(--gold); }
+
+  @media (max-width: 768px) {
+    .header { padding: 0 16px; }
+    .tabs { padding: 0 16px; overflow-x: auto; }
+    .main { padding: 16px; }
+    .cards-grid { grid-template-columns: repeat(2, 1fr); }
+    .pie-wrap { grid-template-columns: 1fr; }
+    .pie-container { height: 220px; }
+  }
+  /* ── 隱藏 number input 上下箭頭 ── */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+  input[type=number] { -moz-appearance:textfield; }
+
+  /* ── READONLY MODE ── */
+  body.readonly .add-panel { display: none !important; }
+  body.readonly .btn-danger { display: none !important; }
+  body.readonly .btn-gold { display: none !important; }
+  body.readonly input[type=number],
+  body.readonly input[type=text],
+  body.readonly input[type=date] {
+    pointer-events: none;
+    border-color: transparent !important;
+    background: transparent !important;
+  }
+  body.readonly select {
+    pointer-events: none;
+    border-color: transparent !important;
+    background: transparent !important;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  body.readonly .acct-tab-close { display: none !important; }
+  body.readonly .acct-add { display: none !important; }
+  body.readonly #readonlyBtn {
+    background: rgba(91,156,246,0.15);
+    color: var(--blue);
+    border-color: var(--blue);
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <div class="logo-mark">F</div>
+    <div>
+      <div class="fund-title" id="fundNameDisplay">我的基金</div>
+      <div class="fund-subtitle">Portfolio Manager</div>
+    </div>
+  </div>
+  <div class="header-date" id="headerDate"></div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <button id="readonlyBtn" onclick="toggleReadonly()"
+      style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;transition:all 0.2s">
+      🔒 唯讀
+    </button>
+    <div id="syncStatus" style="font-size:11px;padding:4px 10px;border-radius:20px;font-family:var(--mono);background:var(--surface2);color:var(--text-dim)">⏳ 連線中...</div>
+  </div>
+</header>
+
+<!-- 帳戶分頁列 -->
+<div class="account-bar" id="accountBar"></div>
+
+<nav class="tabs">
+  <button class="tab active" onclick="showPage('overview')">📊 總覽</button>
+  <button class="tab" onclick="showPage('portfolio')">📋 持倉管理</button>
+  <button class="tab" onclick="showPage('cashflow')">💰 出入金</button>
+  <button class="tab" onclick="showPage('performance')">📈 績效曲線</button>
+  <button class="tab" onclick="showPage('allocation')">🥧 配置分析</button>
+  <button class="tab" onclick="showPage('profit')">👥 獲利分配</button>
+  <button class="tab" onclick="showPage('settings')">⚙ 設定</button>
+</nav>
+
+<main class="main">
+
+  <!-- ══════════════════════════════════════════ PAGE: OVERVIEW ══════════════════════════════════════════ -->
+  <div id="page-overview" class="page active">
+
+    <div class="cards-grid" id="summaryCards">
+      <!-- dynamic -->
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">本週快照記錄</span>
+          <button class="btn btn-gold btn-sm" onclick="saveWeeklySnapshot()">＋ 記錄本週</button>
+        </div>
+        <div class="section-body">
+          <div class="snapshot-list" id="snapshotList"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">損益摘要</span>
+        </div>
+        <div class="section-body" id="pnlSummary">
+          <!-- dynamic -->
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: PORTFOLIO ══════════════════════════════════════════ -->
+  <div id="page-portfolio" class="page">
+
+    <div class="add-panel">
+      <div class="add-panel-title">＋ 新增 / 更新持倉</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">交易類別</label>
+          <select class="form-input" id="p_tradeType" onchange="onTradeTypeChange()">
+            <option value="現股">現股</option>
+            <option value="融資">融資</option>
+            <option value="零股">零股</option>
+            <option value="ETF">ETF</option>
+            <option value="期貨">期貨</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">股票代號</label>
+          <input class="form-input" id="p_ticker" placeholder="e.g. 2330" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">名稱</label>
+          <input class="form-input" id="p_name" placeholder="台積電" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">庫存數量（股/口）</label>
+          <input class="form-input" id="p_shares" type="number" placeholder="1000" oninput="updateFeePreview()" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">成交價格（元/股）</label>
+          <input class="form-input" id="p_cost" type="number" placeholder="500" oninput="updateFeePreview()" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">現價（元/股）</label>
+          <input class="form-input" id="p_price" type="number" placeholder="600" oninput="updateFeePreview()" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">產業別</label>
+          <select class="form-input" id="p_sector">
+            <option value="科技">科技</option>
+            <option value="金融">金融</option>
+            <option value="消費">消費</option>
+            <option value="工業">工業</option>
+            <option value="醫療">醫療</option>
+            <option value="能源">能源</option>
+            <option value="材料">材料</option>
+            <option value="房地產">房地產</option>
+            <option value="ETF">ETF</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">手續費折扣（折）</label>
+          <input class="form-input" id="p_feeDiscount" type="number" placeholder="6" value="6" min="1" max="10" step="0.1" oninput="updateFeePreview()" />
+        </div>
+        <div class="form-group" id="p_futuresMgrGroup" style="display:none">
+          <label class="form-label">期貨手續費（元/口）</label>
+          <input class="form-input" id="p_futuresFee" type="number" placeholder="60" value="60" oninput="updateFeePreview()" />
+        </div>
+      </div>
+      <div id="feePreview" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px;display:none;font-size:13px;"></div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button class="btn btn-gold" onclick="addHolding()">確認新增</button>
+        <button class="btn btn-outline" onclick="clearPortfolioForm()">清除</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">持倉明細</span>
+        <span style="font-size:12px;color:var(--text-dim)" id="holdingCount"></span>
+      </div>
+      <div class="section-body" style="padding:0">
+        <div class="table-wrap">
+          <table id="holdingsTable">
+            <thead>
+              <tr>
+                <th>交易類別</th>
+                <th>代號 / 名稱</th>
+                <th>產業</th>
+                <th>庫存數量</th>
+                <th>成交價格</th>
+                <th>現價</th>
+                <th>付出成本</th>
+                <th>預估收入</th>
+                <th>目前市值</th>
+                <th>損益</th>
+                <th>報酬率</th>
+                <th>手續費成本</th>
+                <th>維持率</th>
+                <th>占比</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="holdingsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: CASHFLOW ══════════════════════════════════════════ -->
+  <div id="page-cashflow" class="page">
+
+    <div class="add-panel">
+      <div class="add-panel-title">＋ 新增出入金紀錄</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">日期</label>
+          <input class="form-input" id="cf_date" type="date" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">類型</label>
+          <select class="form-input" id="cf_type">
+            <option value="入金">入金</option>
+            <option value="出金">出金</option>
+            <option value="已實現">已實現損益</option>
+            <option value="股息">股息</option>
+            <option value="手續費">手續費</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">名目 / 備註</label>
+          <input class="form-input" id="cf_note" placeholder="月定期投入、獲利提領…" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">金額 (元)</label>
+          <input class="form-input" id="cf_amount" type="number" placeholder="100000" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">歸屬人</label>
+          <select class="form-input" id="cf_person">
+            <option value="">— 請選擇 —</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-gold" onclick="addCashflow()">確認新增</button>
+    </div>
+
+    <div class="cards-grid" style="grid-template-columns:repeat(5,1fr)">
+      <div class="card">
+        <div class="card-label">累計入金</div>
+        <div class="card-value" id="cf_totalIn" style="color:var(--blue)">$0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">累計出金</div>
+        <div class="card-value" id="cf_totalOut" style="color:#f59e0b">$0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">累計已實現損益</div>
+        <div class="card-value" id="cf_totalRealized" style="color:var(--green)">$0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">淨投入資金</div>
+        <div class="card-value" id="cf_netIn">$0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">基金總市值</div>
+        <div class="card-value" style="color:var(--gold)" id="cf_fundNav">$0</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">出入金明細</span>
+      </div>
+      <div class="section-body" style="padding:0">
+        <div class="table-wrap">
+          <table id="cashflowTable">
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>類型</th>
+                <th>歸屬人</th>
+                <th>名目</th>
+                <th>金額</th>
+                <th>基金總市值</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="cashflowTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: PERFORMANCE ══════════════════════════════════════════ -->
+  <div id="page-performance" class="page">
+
+    <div class="cards-grid" style="grid-template-columns:repeat(7,1fr)">
+      <div class="card">
+        <div class="card-label">目前市值</div>
+        <div class="card-value" id="perf_totalNav" style="color:var(--gold)">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">淨投入資金</div>
+        <div class="card-value" id="perf_netDep" style="color:var(--text)">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">累計報酬率</div>
+        <div class="card-value" id="perf_total">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">最高獲利</div>
+        <div class="card-value" id="perf_high" style="color:var(--gold)">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">最大回撤 MDD</div>
+        <div class="card-value" id="perf_drawdown" style="color:var(--down)">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">未實現損益</div>
+        <div class="card-value" id="perf_unrealized">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">累計已實現損益</div>
+        <div class="card-value" id="perf_realized">—</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">淨值績效曲線</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <label style="font-size:11px;color:var(--text-dim)">線條顏色</label>
+          <input type="color" id="navChartColor" value="#c9a84c"
+            style="width:28px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;"
+            onchange="updateNavChartColor(this.value)" />
+          <button class="btn btn-outline btn-sm" onclick="setChartRange('all')">全部</button>
+          <button class="btn btn-outline btn-sm" onclick="setChartRange(12)">近12筆</button>
+          <button class="btn btn-outline btn-sm" onclick="setChartRange(4)">近4筆</button>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="chart-container">
+          <canvas id="navChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">已實現損益報酬率（每筆）</span>
+      </div>
+      <div class="section-body">
+        <div class="chart-container" style="height:200px;">
+          <canvas id="returnChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">今年已實現損益累計折線圖</span>
+      </div>
+      <div class="section-body">
+        <div class="chart-container" style="height:220px;">
+          <canvas id="realizedChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: ALLOCATION ══════════════════════════════════════════ -->
+  <div id="page-allocation" class="page">
+
+    <!-- 顏色自訂面板 -->
+    <div class="add-panel" style="margin-bottom:20px;">
+      <div class="add-panel-title">🎨 圓餅圖顏色自訂</div>
+      <div id="colorEditorList" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-gold btn-sm" onclick="applyColors()">套用顏色</button>
+        <button class="btn btn-outline btn-sm" onclick="resetColors()">重置預設</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">個股佔比</span>
+        </div>
+        <div class="section-body">
+          <div class="pie-wrap">
+            <div class="pie-container">
+              <canvas id="stockPieChart"></canvas>
+            </div>
+            <ul class="legend-list" id="stockLegend"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">產業別佔比</span>
+        </div>
+        <div class="section-body">
+          <div class="pie-wrap">
+            <div class="pie-container">
+              <canvas id="sectorPieChart"></canvas>
+            </div>
+            <ul class="legend-list" id="sectorLegend"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">持倉集中度分析</span>
+      </div>
+      <div class="section-body" style="padding:0">
+        <div class="table-wrap">
+          <table id="allocationTable">
+            <thead>
+              <tr>
+                <th>名稱</th>
+                <th>產業</th>
+                <th>市值</th>
+                <th>付出成本</th>
+                <th>佔比</th>
+                <th>視覺化</th>
+              </tr>
+            </thead>
+            <tbody id="allocationTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: PROFIT DISTRIBUTION ══════════════════════════════════════════ -->
+  <div id="page-profit" class="page">
+
+    <!-- 投資人設定 -->
+    <div class="add-panel">
+      <div class="add-panel-title">＋ 新增投資人</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">姓名</label>
+          <input class="form-input" id="inv_name" placeholder="強" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">角色</label>
+          <select class="form-input" id="inv_role">
+            <option value="出資">出資</option>
+            <option value="技術">技術（不出資）</option>
+            <option value="出資+技術">出資 + 技術</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">協議分潤比例 (%)</label>
+          <input class="form-input" id="inv_ratio" type="number" placeholder="45" min="0" max="100" step="0.1" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">協議池本金 (元)</label>
+          <input class="form-input" id="inv_pool" type="number" placeholder="1000000" />
+          <span style="font-size:11px;color:var(--text-muted)">技術方填 0</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button class="btn btn-gold" onclick="addInvestor()">新增投資人</button>
+      </div>
+      <!-- 出資比例 vs 協議分潤對照表 -->
+      <div id="inv_ratioCheck" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- 投資人卡片 -->
+    <div id="investorCards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:24px;"></div>
+
+    <!-- 獲利分配計算 -->
+    <div class="section">
+      <div class="section-header"><span class="section-title">本期獲利分配計算</span></div>
+      <div class="section-body">
+        <div class="form-grid" style="max-width:700px">
+          <div class="form-group">
+            <label class="form-label">結算日期</label>
+            <input class="form-input" id="dist_date" type="date" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">期間名稱</label>
+            <input class="form-input" id="dist_period" placeholder="2026年3月" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">本期總獲利 (元)</label>
+            <input class="form-input" id="dist_profit" type="number" placeholder="1500000" oninput="previewDistribution()" />
+          </div>
+        </div>
+
+        <!-- 即時預覽 -->
+        <div id="dist_preview" style="margin:16px 0;display:none;">
+          <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px;">分配預覽</div>
+          <div id="dist_preview_table"></div>
+        </div>
+
+        <button class="btn btn-gold" onclick="confirmDistribution()">確認並儲存分配</button>
+      </div>
+    </div>
+
+    <!-- 分配歷史 -->
+    <div class="section">
+      <div class="section-header"><span class="section-title">歷史分配紀錄</span></div>
+      <div class="section-body" style="padding:0">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>期間</th>
+                <th>結算日期</th>
+                <th>本期獲利</th>
+                <th>協議池</th>
+                <th id="dist_th_cols"></th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="distHistoryTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 各人淨值趨勢 -->
+    <div class="section">
+      <div class="section-header"><span class="section-title">各投資人累計淨值走勢</span></div>
+      <div class="section-body">
+        <div class="chart-container" style="height:280px;">
+          <canvas id="investorNavChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════ PAGE: SETTINGS ══════════════════════════════════════════ -->
+  <div id="page-settings" class="page">
+    <div class="section">
+      <div class="section-header"><span class="section-title">基金設定</span></div>
+      <div class="section-body">
+        <div class="form-grid" style="max-width:600px">
+          <div class="form-group">
+            <label class="form-label">基金名稱</label>
+            <input class="form-input" id="s_fundName" placeholder="我的基金" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">基準貨幣</label>
+            <select class="form-input" id="s_currency">
+              <option value="TWD">TWD 新台幣</option>
+              <option value="USD">USD 美元</option>
+              <option value="CNY">CNY 人民幣</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">初始淨值基準</label>
+            <input class="form-input" id="s_initNav" type="number" placeholder="1000000" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">起始日期</label>
+            <input class="form-input" id="s_startDate" type="date" />
+          </div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px;">
+          <button class="btn btn-gold" onclick="saveSettings()">儲存設定</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><span class="section-title">資料管理</span></div>
+      <div class="section-body" style="display:flex;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-outline" onclick="exportData()">📤 匯出 JSON</button>
+        <button class="btn btn-outline" onclick="importData()">📥 匯入 JSON</button>
+        <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(event)" />
+        <button class="btn btn-danger" onclick="clearAllData()">🗑 清除全部資料</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><span class="section-title">使用說明</span></div>
+      <div class="section-body" style="line-height:2;color:var(--text-dim);font-size:13px;">
+        <p>📋 <strong style="color:var(--text)">持倉管理</strong>：每週更新「現價」即可自動計算損益、獲利率、市值佔比。</p>
+        <p>💰 <strong style="color:var(--text)">出入金</strong>：記錄每筆入金/出金，系統自動計算基金總市值（市值 + 現金）。</p>
+        <p>📈 <strong style="color:var(--text)">績效曲線</strong>：點選總覽頁「記錄本週」即可儲存當週快照，績效圖自動更新。</p>
+        <p>🥧 <strong style="color:var(--text)">配置分析</strong>：自動依市值計算各股及產業別佔比。</p>
+        <p>💾 <strong style="color:var(--text)">資料儲存</strong>：所有資料存於瀏覽器本地，建議定期匯出 JSON 備份。</p>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════
+// MULTI-ACCOUNT STATE
+// ════════════════════════════════════════════
+// accounts = [ { id, name, ...stateFields }, ... ]
+let accounts = [];
+let currentAccountId = null;
+
+function emptyAccount(name = '帳戶') {
+  return {
+    id: Date.now().toString() + Math.random().toString(36).slice(2,6),
+    name,
+    settings: { fundName: name, currency: 'TWD', initNav: 1000000, startDate: '' },
+    holdings: [],
+    cashflows: [],
+    snapshots: [],
+    realizedPnL: [],
+    investors: [],
+    profitDists: [],
+    customColors: {},
+  };
+}
+
+// state 指向當前帳戶（所有現有程式碼保持不動）
+let state = emptyAccount('帳戶 A');
+
+function getCurrentAccount() {
+  return accounts.find(a => a.id === currentAccountId) || accounts[0];
+}
+
+function switchAccount(id) {
+  currentAccountId = id;
+  localStorage.setItem('fundMgr_currentAcct', id);
+  state = getCurrentAccount();
+  renderAccountBar();
+  renderPage(document.querySelector('.page.active')?.id?.replace('page-','') || 'overview');
+}
+
+function addAccount() {
+  const name = `帳戶 ${String.fromCharCode(65 + accounts.length)}`;
+  const acct = emptyAccount(name);
+  accounts.push(acct);
+  currentAccountId = acct.id;
+  state = acct;
+  saveAllAccounts();
+  renderAccountBar();
+  renderPage('overview');
+}
+
+function renameAccount(id, newName) {
+  const acct = accounts.find(a => a.id === id);
+  if (acct) { acct.name = newName; acct.settings.fundName = newName; }
+  saveAllAccounts();
+  renderAccountBar();
+  document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || '我的基金';
+}
+
+function closeAccount(id) {
+  if (accounts.length <= 1) { toast('至少保留一個帳戶'); return; }
+  if (!confirm('確定刪除此帳戶？所有資料將消失。')) return;
+  accounts = accounts.filter(a => a.id !== id);
+  if (currentAccountId === id) {
+    currentAccountId = accounts[0].id;
+    state = accounts[0];
+  }
+  saveAllAccounts();
+  renderAccountBar();
+  renderPage('overview');
+}
+
+function renderAccountBar() {
+  const bar = document.getElementById('accountBar');
+  if (!bar) return;
+  bar.innerHTML = accounts.map(acct => `
+    <div class="acct-tab ${acct.id === currentAccountId ? 'active' : ''}" onclick="switchAccount('${acct.id}')">
+      <span class="acct-tab-name"
+        contenteditable="true"
+        onblur="renameAccount('${acct.id}', this.textContent.trim())"
+        onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}"
+        onclick="event.stopPropagation()"
+      >${acct.name}</span>
+      ${accounts.length > 1 ? `<span class="acct-tab-close" onclick="event.stopPropagation();closeAccount('${acct.id}')">✕</span>` : ''}
+    </div>
+  `).join('') + `<button class="acct-add" onclick="addAccount()" title="新增帳戶">＋</button>`;
+}
+
+// ════════════════════════════════════════════
+// STATE initialised above via emptyAccount()
+// ════════════════════════════════════════════
+
+// ════════════════════════════════════════════
+// STORAGE — Firebase 雲端同步（多帳戶）
+// ════════════════════════════════════════════
+let _saveTimer = null;
+
+function setSyncStatus(s) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  if (s === 'ok')      { el.textContent = '☁ 已同步'; el.style.color = 'var(--down)'; }
+  else if (s === 'saving') { el.textContent = '↑ 儲存中...'; el.style.color = 'var(--gold)'; }
+  else if (s === 'err')    { el.textContent = '✗ 同步失敗'; el.style.color = 'var(--up)'; }
+  else                     { el.textContent = '⏳ 連線中...'; el.style.color = 'var(--text-dim)'; }
+}
+
+function saveAllAccounts() {
+  // 把當前 state 同步回 accounts 陣列
+  const idx = accounts.findIndex(a => a.id === currentAccountId);
+  if (idx >= 0) accounts[idx] = { ...state, id: currentAccountId, name: accounts[idx].name };
+  // currentAccountId 存本地，不上傳 Firebase
+  localStorage.setItem('fundMgr_currentAcct', currentAccountId);
+  const payload = { accounts }; // 不含 currentAccountId
+  localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+  clearTimeout(_saveTimer);
+  setSyncStatus('saving');
+  _saveTimer = setTimeout(async () => {
+    try {
+      if (window._docRef && window._setDoc) {
+        await window._setDoc(window._docRef, { data: JSON.stringify(payload), updatedAt: Date.now() });
+        setSyncStatus('ok');
+      }
+    } catch(e) { setSyncStatus('err'); }
+  }, 1000);
+}
+
+// alias used throughout existing code
+function save() { saveAllAccounts(); }
+
+function loadLocal() {
+  const d3 = localStorage.getItem('fundMgr_v3');
+  if (d3) {
+    try {
+      const p = JSON.parse(d3);
+      accounts = p.accounts || [];
+      // currentAccountId 優先用本地記錄
+      const localAcctId = localStorage.getItem('fundMgr_currentAcct');
+      currentAccountId = (localAcctId && accounts.find(a => a.id === localAcctId))
+        ? localAcctId
+        : (accounts[0]?.id);
+      state = getCurrentAccount() || emptyAccount('帳戶 A');
+      if (!accounts.length) { accounts = [state]; currentAccountId = state.id; }
+      return;
+    } catch(e) {}
+  }
+  const d2 = localStorage.getItem('fundMgr_v2');
+  if (d2) {
+    try {
+      const old = JSON.parse(d2);
+      const acct = { ...emptyAccount('帳戶 A'), ...old, id: 'acct_main', name: old.settings?.fundName || '帳戶 A' };
+      accounts = [acct];
+      currentAccountId = acct.id;
+      state = acct;
+      return;
+    } catch(e) {}
+  }
+  const acct = emptyAccount('帳戶 A');
+  accounts = [acct];
+  currentAccountId = acct.id;
+  state = acct;
+}
+
+function load() { loadLocal(); }
+
+async function loadFromFirebase() {
+  try {
+    if (!window._docRef || !window._getDoc) return;
+    setSyncStatus('connecting');
+    const snap = await window._getDoc(window._docRef);
+    if (snap.exists()) {
+      const rawData = snap.data().data;
+      const remote = JSON.parse(rawData);
+      const localTime = JSON.parse(localStorage.getItem('fundMgr_v3') || '{}')._ts || 0;
+      const remoteTime = snap.data().updatedAt || 0;
+      if (remoteTime >= localTime) {
+        if (remote.accounts) {
+          accounts = remote.accounts;
+          currentAccountId = remote.currentAccountId || accounts[0]?.id;
+          state = getCurrentAccount() || accounts[0];
+        }
+        localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+        refreshAllViews();
+      }
+    }
+    setSyncStatus('ok');
+    window._onSnapshot(window._docRef, (snap) => {
+      if (!snap.exists()) return;
+      try {
+        const remote = JSON.parse(snap.data().data);
+        if (remote.accounts) {
+          accounts = remote.accounts;
+          currentAccountId = remote.currentAccountId || accounts[0]?.id;
+          state = getCurrentAccount() || accounts[0];
+          localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+          refreshAllViews();
+          setSyncStatus('ok');
+        }
+      } catch(e) {}
+    });
+  } catch(e) { setSyncStatus('err'); }
+}
+
+function refreshAllViews() {
+  if (!state.investors) state.investors = [];
+  if (!state.profitDists) state.profitDists = [];
+  if (!state.realizedPnL) state.realizedPnL = [];
+  if (!state.customColors) state.customColors = {};
+  document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
+  renderAccountBar();
+  const activePage = document.querySelector('.page.active');
+  if (activePage) renderPage(activePage.id.replace('page-', ''));
+}
+
+// ════════════════════════════════════════════
+// COMPUTED
+// ════════════════════════════════════════════
+function totalMarketValue() {
+  // 永遠用 shares × price 自動計算，manualMarket 只影響表格顯示
+  return state.holdings.reduce((s, h) => s + h.shares * h.price, 0);
+}
+function totalCost() {
+  // 用手動輸入值（若有），否則用自動計算（融資=自備款，現股=全額）
+  return state.holdings.reduce((s, h) => {
+    if (h.manualCost != null) return s + h.manualCost;
+    const totalAmt = h.shares * h.cost;
+    const isMargin = h.tradeType === '融資';
+    const selfPayRate = 1 - (h.marginRate || 0.6);
+    return s + (isMargin ? Math.round(totalAmt * selfPayRate) : totalAmt);
+  }, 0);
+}
+function totalPnL() { return totalMarketValue() - totalCost(); }
+function profitRate() {
+  const c = totalCost();
+  return c === 0 ? 0 : (totalPnL() / c) * 100;
+}
+function netDeposited() {
+  return state.cashflows.reduce((s, c) => {
+    if (c.type === '入金') return s + c.amount;
+    if (c.type === '出金') return s - c.amount;
+    if (c.type === '股息') return s + c.amount;
+    if (c.type === '已實現') return s + c.amount;
+    if (c.type === '手續費') return s - c.amount;
+    return s;
+  }, 0);
+}
+function totalRealizedPnL() {
+  return (state.realizedPnL || []).reduce((s, r) => s + r.pnl, 0);
+}
+// 現金餘額 = 淨投入資金 - 目前付出成本（花出去買股票的錢）
+function cashBalance() { return netDeposited() - totalCost(); }
+// 基金總市值 = 持倉市值 + 現金餘額
+function fundTotalNav() { return totalMarketValue() + cashBalance(); }
+
+const DEFAULT_COLORS = [
+  '#c9a84c','#5b9cf6','#3ecf8e','#f26e6e','#a78bfa',
+  '#f59e0b','#34d399','#f87171','#60a5fa','#e879f9',
+  '#facc15','#4ade80','#fb923c','#38bdf8','#c084fc',
+];
+// 取得顏色（支援自訂）
+function getColor(key) {
+  const custom = (state.customColors || {})[key];
+  return custom || DEFAULT_COLORS[Object.keys(state.customColors||{}).length % DEFAULT_COLORS.length];
+}
+function getColorByIndex(i) {
+  const custom = state.customColors || {};
+  const keys = Object.keys(custom);
+  if (i < keys.length && custom[keys[i]]) return custom[keys[i]];
+  return DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+}
+// 取得某個 label 對應的顏色
+function getLabelColor(label) {
+  const custom = state.customColors || {};
+  if (custom[label]) return custom[label];
+  // 查找 label 在 holdings 或 sector 中的 index
+  const allLabels = [
+    ...(state.holdings||[]).map(h => h.name || h.ticker),
+    ...Object.keys((() => {
+      const m={};(state.holdings||[]).forEach(h=>{m[h.sector||'其他']=1});return m;
+    })()),
+    '現金'
+  ];
+  const idx = allLabels.indexOf(label);
+  return DEFAULT_COLORS[idx >= 0 ? idx % DEFAULT_COLORS.length : 0];
+}
+
+// ════════════════════════════════════════════
+// TABS / PAGES
+// ════════════════════════════════════════════
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.currentTarget.classList.add('active');
+  renderPage(name);
+}
+function renderPage(name) {
+  if (name === 'overview') renderOverview();
+  if (name === 'portfolio') renderPortfolio();
+  if (name === 'cashflow') renderCashflow();
+  if (name === 'performance') renderPerformance();
+  if (name === 'allocation') renderAllocation();
+  if (name === 'profit') renderProfit();
+  if (name === 'settings') renderSettings();
+}
+
+// ════════════════════════════════════════════
+// FORMAT
+// ════════════════════════════════════════════
+function fmt(n, digits=0) {
+  return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+function fmtMoney(n) {
+  if (n < 0) return '-$' + fmt(Math.abs(n));
+  return '$' + fmt(n);
+}
+function fmtPct(n) { return (n > 0 ? '+' : '') + n.toFixed(2) + '%'; }
+function signClass(n) { return n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'; }
+// 台股慣例顏色（給Chart.js用）
+function upColor(n) { return n >= 0 ? 'rgba(242,110,110,0.75)' : 'rgba(62,207,142,0.75)'; }
+
+// ════════════════════════════════════════════
+// OVERVIEW
+// ════════════════════════════════════════════
+function renderOverview() {
+  const mv = totalMarketValue(), tc = totalCost(), pnl = totalPnL(), pr = profitRate();
+  const nav = fundTotalNav();
+  const snaps = state.snapshots;
+  let weekReturn = 0;
+  if (snaps.length >= 2) {
+    const prev = snaps[snaps.length-2].nav, cur = snaps[snaps.length-1].nav;
+    weekReturn = ((cur - prev) / prev) * 100;
+  }
+
+  document.getElementById('summaryCards').innerHTML = `
+    <div class="card">
+      <div class="card-label">基金總市值</div>
+      <div class="card-value" style="color:var(--gold)">${fmtMoney(nav)}</div>
+      <div class="card-change">市值總計</div>
+    </div>
+    <div class="card">
+      <div class="card-label">付出總成本</div>
+      <div class="card-value">${fmtMoney(tc)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">預估損益</div>
+      <div class="card-value ${signClass(pnl)}">${fmtMoney(pnl)}</div>
+      <div class="card-change ${signClass(pr)}">${fmtPct(pr)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">獲利率</div>
+      <div class="card-value ${signClass(pr)}">${pr.toFixed(2)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">持倉數</div>
+      <div class="card-value" style="color:var(--blue)">${state.holdings.length}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">本週報酬</div>
+      <div class="card-value ${signClass(weekReturn)}">${snaps.length >= 2 ? fmtPct(weekReturn) : '—'}</div>
+    </div>
+  `;
+
+  // Snapshots
+  const sl = document.getElementById('snapshotList');
+  if (state.snapshots.length === 0) {
+    sl.innerHTML = '<div class="empty"><div class="empty-icon">📷</div>尚無快照，點選「記錄本週」開始追蹤</div>';
+  } else {
+    sl.innerHTML = [...state.snapshots].reverse().slice(0, 10).map((s, i) => {
+      const arr = [...state.snapshots].reverse();
+      let ret = '—';
+      if (i < arr.length - 1) {
+        const prev = arr[i+1].nav;
+        ret = fmtPct(((s.nav - prev) / prev) * 100);
+      }
+      const retCls = ret.startsWith('+') ? 'positive' : ret.startsWith('-') ? 'negative' : 'neutral';
+      return `<div class="snapshot-item">
+        <span class="snapshot-date">${s.date}</span>
+        <span class="snapshot-nav">${fmtMoney(s.nav)}</span>
+        <span class="snapshot-return ${retCls}">${ret}</span>
+        <button class="btn btn-danger btn-sm" onclick="deleteSnapshot('${s.id}')">刪除</button>
+      </div>`;
+    }).join('');
+  }
+
+  // P&L detail
+  document.getElementById('pnlSummary').innerHTML = `
+    <table style="width:100%">
+      <tbody>
+        <tr><td style="color:var(--text-dim);padding:8px 0">市值（Market Value）</td><td style="text-align:right;font-family:var(--mono);color:var(--text)">${fmtMoney(mv)}</td></tr>
+        <tr><td style="color:var(--text-dim);padding:8px 0">付出成本（Cost Basis）</td><td style="text-align:right;font-family:var(--mono);color:var(--text)">${fmtMoney(tc)}</td></tr>
+        <tr style="border-top:1px solid var(--border)">
+          <td style="color:var(--text-dim);padding:8px 0">預估收入（Estimated PnL）</td>
+          <td style="text-align:right;font-family:var(--mono)" class="${signClass(pnl)}">${fmtMoney(pnl)}</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-dim);padding:8px 0">損益試算（Return）</td>
+          <td style="text-align:right;font-family:var(--mono)" class="${signClass(pnl)}">${fmtMoney(pnl)}</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border)">
+          <td style="color:var(--gold);padding:8px 0;font-weight:600">獲利率</td>
+          <td style="text-align:right;font-family:var(--mono);font-size:18px;font-weight:600" class="${signClass(pr)}">${pr.toFixed(2)}%</td>
+        </tr>
+        <tr style="border-top:1px solid var(--border)">
+          <td style="color:var(--text-dim);padding:8px 0">現金餘額（估算）</td>
+          <td style="text-align:right;font-family:var(--mono);color:var(--blue)">${fmtMoney(cashBalance())}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function saveWeeklySnapshot() {
+  const today = new Date().toISOString().slice(0,10);
+  const nav = fundTotalNav(); // market value + cash balance
+  const id = Date.now().toString();
+  state.snapshots.push({
+    id, date: today, nav,
+    totalCost: totalCost(),
+    totalMarket: totalMarketValue(),
+    cashBal: cashBalance()
+  });
+  save();
+  renderOverview();
+  renderPerformance();
+  toast('已記錄本週快照 ✓');
+}
+
+function deleteSnapshot(id) {
+  state.snapshots = state.snapshots.filter(s => s.id !== id);
+  save();
+  renderOverview();
+  renderPerformance();
+  toast('快照已刪除');
+}
+
+// ════════════════════════════════════════════
+// FEE CALCULATIONS (台股規則)
+// ════════════════════════════════════════════
+const TWSE_FEE_RATE = 0.001425;      // 手續費 0.1425%
+const TWSE_TAX_RATE = 0.003;         // 證交稅 0.3%
+const ETF_TAX_RATE = 0.001;          // ETF 證交稅 0.1%
+const DAYTRADE_TAX_RATE = 0.0015;    // 當沖稅 0.15%
+const MARGIN_RATE_LISTED = 0.6;      // 上市融資成數
+const MARGIN_RATE_OTC = 0.5;         // 上櫃融資成數
+const MARGIN_INTEREST_RATE = 0.065;  // 融資年利率 6.5%
+const MARGIN_CALL_THRESHOLD = 1.30;  // 追繳門檻 130%
+const FUTURES_TAX_RATE = 0.00002;    // 期交稅 十萬分之二
+
+function calcStockFee(amount, discount = 6, isEtf = false) {
+  // 手續費：買 or 賣
+  const discountRate = discount / 10;
+  const fee = Math.max(20, Math.round(amount * TWSE_FEE_RATE * discountRate));
+  return fee;
+}
+function calcStockTax(amount, isEtf = false, isDayTrade = false) {
+  const taxRate = isDayTrade ? DAYTRADE_TAX_RATE : (isEtf ? ETF_TAX_RATE : TWSE_TAX_RATE);
+  return Math.round(amount * taxRate);
+}
+function calcZeroShareFee(amount, discount = 6) {
+  const discountRate = discount / 10;
+  return Math.max(1, Math.round(amount * TWSE_FEE_RATE * discountRate));
+}
+function calcMarginAmount(totalCost, marginRate) {
+  return Math.round(totalCost * marginRate);
+}
+function calcMarginSelfPay(totalCost, marginRate) {
+  return Math.round(totalCost * (1 - marginRate));
+}
+function calcMarginInterest(marginAmount, days) {
+  return Math.round(marginAmount * MARGIN_INTEREST_RATE * days / 365);
+}
+function calcMarginMaintainRate(currentValue, marginAmount) {
+  if (marginAmount === 0) return Infinity;
+  return currentValue / marginAmount;
+}
+function calcFuturesContractValue(price, lots) {
+  return price * 2000 * lots; // 1口=2000股
+}
+function calcFuturesMargin(price, lots, marginPct = 0.135) {
+  return Math.round(calcFuturesContractValue(price, lots) * marginPct);
+}
+function calcFuturesTax(contractValue) {
+  return Math.round(contractValue * FUTURES_TAX_RATE);
+}
+
+// 顯示/隱藏融資、期貨欄位
+function onTradeTypeChange() {
+  const t = document.getElementById('p_tradeType').value;
+  document.getElementById('p_futuresMgrGroup').style.display = t === '期貨' ? '' : 'none';
+  updateFeePreview();
+}
+
+function updateFeePreview() {
+  const t = document.getElementById('p_tradeType').value;
+  const shares = parseFloat(document.getElementById('p_shares').value) || 0;
+  const cost = parseFloat(document.getElementById('p_cost').value) || 0;
+  const price = parseFloat(document.getElementById('p_price').value) || 0;
+  const discount = parseFloat(document.getElementById('p_feeDiscount').value) || 6;
+  const totalCost = shares * cost;
+  const currentVal = shares * price;
+
+  if (!totalCost && !currentVal) {
+    document.getElementById('feePreview').style.display = 'none';
+    return;
+  }
+  document.getElementById('feePreview').style.display = 'block';
+
+  let html = `<div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">費用試算預覽</div>`;
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">`;
+
+  const buyFee = calcStockFee(totalCost, discount, t==='ETF');
+  const sellFee = calcStockFee(currentVal, discount, t==='ETF');
+  const sellTax = calcStockTax(currentVal, t==='ETF');
+
+  if (t === '現股' || t === 'ETF' || t === '其他') {
+    html += feeBox('買進手續費', buyFee, '元');
+    html += feeBox('賣出手續費', sellFee, '元');
+    html += feeBox('賣出證交稅', sellTax, '元', t==='ETF'?'ETF 0.1%':'0.3%');
+    html += feeBox('來回總費用', buyFee + sellFee + sellTax, '元');
+    html += feeBox('損益', currentVal - totalCost - buyFee - sellFee - sellTax, '元', '扣費後');
+  } else if (t === '零股') {
+    const zBuy = calcZeroShareFee(totalCost, discount);
+    const zSell = calcZeroShareFee(currentVal, discount);
+    const zTax = calcStockTax(currentVal, false);
+    html += feeBox('買進手續費', zBuy, '元', '最低$1');
+    html += feeBox('賣出手續費', zSell, '元', '最低$1');
+    html += feeBox('賣出證交稅', zTax, '元');
+    html += feeBox('來回總費用', zBuy + zSell + zTax, '元');
+  } else if (t === '融資') {
+    const mRate = 0.6; // 預設上市60%
+    const interest = 0; // 無天數欄位，不計利息
+    const mAmt = calcMarginAmount(totalCost, mRate);
+    const selfPay = calcMarginSelfPay(totalCost, mRate);
+    const mFee = calcStockFee(totalCost, discount) + calcStockFee(currentVal, discount) + calcStockTax(currentVal, false);
+    const mRate2 = calcMarginMaintainRate(currentVal, mAmt);
+    const isAlert = currentVal > 0 && mRate2 < MARGIN_CALL_THRESHOLD;
+    html += feeBox('融資金額(60%)', mAmt, '元');
+    html += feeBox('自備款(40%)', selfPay, '元');
+    html += feeBox('買進手續費', calcStockFee(totalCost, discount), '元');
+    html += feeBox('賣出手續費+稅', calcStockFee(currentVal, discount) + calcStockTax(currentVal, false), '元');
+    if (currentVal > 0) html += feeBox('維持率', (mRate2*100).toFixed(1), '%', isAlert ? '⚠ 追繳警示 <130%' : '安全 >130%', isAlert ? '#f26e6e' : '#3ecf8e');
+    html += feeBox('來回總費用', mFee, '元');
+  } else if (t === '期貨') {
+    const lots = Math.round(shares / 2000) || 1; // 換算口數
+    const futuresFee = parseFloat(document.getElementById('p_futuresFee').value) || 60;
+    const contractVal = calcFuturesContractValue(cost, lots);
+    const margin = calcFuturesMargin(cost, lots);
+    const tax = calcFuturesTax(contractVal);
+    const totalFee = (futuresFee + tax) * 2; // 來回
+    html += feeBox('口數', lots, '口', '1口=2000股');
+    html += feeBox('契約價值', contractVal, '元');
+    html += feeBox('原始保證金', margin, '元', `~13.5%`);
+    html += feeBox('維持保證金', Math.round(margin*0.75), '元', `~75%`);
+    html += feeBox('期交稅/次', tax, '元', '十萬分之二');
+    html += feeBox('來回總費用', totalFee, '元', '含稅');
+  }
+
+  html += '</div>';
+  document.getElementById('feePreview').innerHTML = html;
+}
+
+function feeBox(label, value, unit, note = '', color = '') {
+  const dispVal = typeof value === 'number' ? (Number.isInteger(value) ? fmt(value) : value.toFixed(1)) : value;
+  const style = color ? `color:${color}` : '';
+  return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+    <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em">${label}</div>
+    <div style="font-family:var(--mono);font-size:15px;font-weight:600;margin-top:2px;${style}">${dispVal}<span style="font-size:11px;margin-left:2px">${unit}</span></div>
+    ${note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${note}</div>` : ''}
+  </div>`;
+}
+
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════
+function renderPortfolio() {
+  const mv = totalMarketValue();
+  const cash = cashBalance();
+  const totalWithCash = mv + cash;
+  const tbody = document.getElementById('holdingsTbody');
+  document.getElementById('holdingCount').textContent = `共 ${state.holdings.length} 檔`;
+
+  let rows = '';
+
+  if (state.holdings.length === 0) {
+    rows = `<tr><td colspan="14"><div class="empty"><div class="empty-icon">📋</div>尚無持倉，請新增</div></td></tr>`;
+  } else {
+    rows = state.holdings.map(h => {
+      const totalAmt   = h.shares * h.cost;
+      const autoMarket = h.shares * h.price;
+      const isMargin   = h.tradeType === '融資';
+      const mRate      = h.marginRate || 0.6;
+      const selfPayRate = 1 - mRate;
+
+      // 付出成本顯示：有 manualCost 就用，否則自動算（融資=自備款，現股=全額）
+      const autoCost = isMargin
+        ? Math.round(totalAmt * selfPayRate)
+        : totalAmt;
+      const displayCost = h.manualCost != null ? h.manualCost : autoCost;
+
+      // 目前市值：有 manualMarket 就用，否則自動
+      const displayMarket = h.manualMarket != null ? h.manualMarket : autoMarket;
+
+      // 預估收入：有 manualEst 就用（手動改後固定），否則 = 目前市值
+      const displayIncome = h.manualEst != null ? h.manualEst : displayMarket;
+
+      // 損益 = 預估收入 − 付出成本；報酬率 = 損益 ÷ 付出成本
+      const pnlDisplay = displayIncome - displayCost;
+      const prDisplay  = displayCost === 0 ? 0 : (pnlDisplay / displayCost) * 100;
+      const weight     = totalWithCash === 0 ? 0 : (displayMarket / totalWithCash) * 100;
+
+      const tradeTypeBadge = isMargin ? 'badge-red' : h.tradeType === '期貨' ? 'badge-gold' : h.tradeType === '零股' ? 'badge-blue' : 'badge-green';
+
+      // 手續費 & 維持率
+      const disc = h.feeDiscount || 6;
+      const isEtf = h.tradeType === 'ETF';
+      const isZero = h.tradeType === '零股';
+      const isFutures = h.tradeType === '期貨';
+      let feeCell = '—', maintainCell = '—', maintainStyle = '';
+
+      if (isFutures) {
+        const lots = Math.round(h.shares / 2000) || 1;
+        feeCell = fmtMoney((h.futuresFee||60)*2 + calcFuturesTax(calcFuturesContractValue(h.cost,lots))*2);
+      } else if (isZero) {
+        feeCell = fmtMoney(calcZeroShareFee(displayCost,disc) + calcZeroShareFee(displayMarket,disc) + calcStockTax(displayMarket,false));
+      } else if (isMargin) {
+        const marginBorrowed = Math.round(totalAmt * mRate);
+        feeCell = fmtMoney(calcStockFee(displayCost,disc) + calcStockFee(displayMarket,disc) + calcStockTax(displayMarket,false));
+        const mr = calcMarginMaintainRate(displayMarket, marginBorrowed);
+        const isAlert = mr < MARGIN_CALL_THRESHOLD;
+        maintainCell = (mr*100).toFixed(1)+'%';
+        maintainStyle = isAlert ? 'color:var(--up);font-weight:700' : 'color:var(--down)';
+        if (isAlert) maintainCell = '⚠ '+maintainCell;
+      } else {
+        feeCell = fmtMoney(calcStockFee(displayCost,disc,isEtf) + calcStockFee(displayMarket,disc,isEtf) + calcStockTax(displayMarket,isEtf));
+      }
+
+      const selStyle  = `background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-family:var(--sans);font-size:12px;cursor:pointer;`;
+      const inpStyle  = `background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-family:var(--mono);font-size:13px;width:90px;`;
+      const inpFull   = inpStyle + `-moz-appearance:textfield;`;
+      const onEnter   = `onkeydown="if(event.key==='Enter')this.blur()"`;
+
+      // 付出成本欄：可編輯，無鎖，融資顯示參考提示
+      const costSubNote = isMargin
+        ? `<div style="font-size:10px;color:var(--text-muted)">${h.manualCost!=null?'自動 '+fmtMoney(autoCost):'全額 '+fmtMoney(totalAmt)}</div>`
+        : '';
+      const costCell = `<div>
+          <input type="number" value="${displayCost}" step="1"
+            style="${inpFull}" inputmode="numeric" ${onEnter}
+            onchange="updateManualCost('${h.id}',this.value)"
+            onblur="updateManualCost('${h.id}',this.value)" />
+          ${costSubNote}
+        </div>`;
+
+      // 預估收入欄：可編輯，無鎖，預設跟市值，手動改後固定
+      const incomeCell = `<input type="number" value="${displayIncome}" step="1"
+          style="${inpFull};color:var(--text-dim);" inputmode="numeric" ${onEnter}
+          onchange="updateManualEst('${h.id}',this.value)"
+          onblur="updateManualEst('${h.id}',this.value)" />`;
+
+      // 目前市值欄：可編輯，無鎖，金色
+      const marketCell = `<input type="number" value="${displayMarket}" step="1"
+          style="${inpFull};color:var(--gold);" inputmode="numeric" ${onEnter}
+          onchange="updateManualMarket('${h.id}',this.value)"
+          onblur="updateManualMarket('${h.id}',this.value)" />`;
+
+      return `<tr>
+        <td><select style="${selStyle}" onchange="updateTradeType('${h.id}',this.value)">
+          ${['現股','融資','零股','ETF','期貨','其他'].map(t=>`<option value="${t}"${h.tradeType===t?' selected':''}>${t}</option>`).join('')}
+        </select></td>
+        <td><div class="td-name">${h.name}</div><div class="td-ticker">${h.ticker}</div></td>
+        <td><select style="${selStyle}" onchange="updateSector('${h.id}',this.value)">
+          ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
+        </select></td>
+        <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
+        <td><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></td>
+        <td><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" /></td>
+        <td>${costCell}</td>
+        <td>${incomeCell}</td>
+        <td>${marketCell}</td>
+        <td class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</td>
+        <td class="${signClass(prDisplay)}">${fmtPct(prDisplay)}</td>
+        <td style="color:var(--text-dim);font-size:12px">${feeCell}</td>
+        <td style="font-size:12px;${maintainStyle}">${maintainCell}</td>
+        <td><div class="weight-bar-wrap">
+          <div class="weight-bar" style="width:${Math.max(weight*2,2)}px"></div>
+          <span class="weight-num">${weight.toFixed(1)}%</span>
+        </div></td>
+        <td><button class="btn btn-danger btn-sm" onclick="deleteHolding('${h.id}')">刪除</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // 現金列（自動計算，不可刪除）
+  const cashWeight = totalWithCash === 0 ? 0 : (cash / totalWithCash) * 100;
+  const cashClass = cash >= 0 ? 'positive' : 'negative';
+  const cashRow = `<tr style="border-top:2px solid var(--border);background:rgba(91,156,246,0.04)">
+    <td><span class="badge badge-blue">現金</span></td>
+    <td>
+      <div class="td-name" style="color:var(--blue)">現金餘額</div>
+      <div class="td-ticker">CASH</div>
+    </td>
+    <td><span class="badge" style="background:rgba(91,156,246,0.15);color:var(--blue)">現金</span></td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td class="${cashClass}" style="font-weight:600">${fmtMoney(cash)}</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td>
+      <div class="weight-bar-wrap">
+        <div class="weight-bar" style="width:${Math.max(cashWeight*2,2)}px;background:var(--blue)"></div>
+        <span class="weight-num">${cashWeight.toFixed(1)}%</span>
+      </div>
+    </td>
+    <td style="color:var(--text-muted);font-size:11px">自動</td>
+  </tr>`;
+
+  // 合計列
+  const totalDisplayCost = state.holdings.reduce((s, h) => {
+    const amt = h.shares * h.cost;
+    const c = h.manualCost != null ? h.manualCost
+      : (h.tradeType==='融資' ? Math.round(amt*(1-(h.marginRate||0.6))) : amt);
+    return s + c;
+  }, 0);
+  const totalDisplayEst = state.holdings.reduce((s, h) => {
+    const est = h.manualEst != null ? h.manualEst : h.shares * h.price;
+    return s + est;
+  }, 0);
+  const totalDisplayMarket = state.holdings.reduce((s, h) => {
+    return s + (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
+  }, 0);
+  const totalPnL = totalDisplayEst - totalDisplayCost;
+  const totalPR = totalDisplayCost === 0 ? 0 : (totalPnL / totalDisplayCost) * 100;
+
+  const totalRow = state.holdings.length > 0 ? `<tr style="border-top:2px solid var(--gold-dim);background:rgba(201,168,76,0.04)">
+    <td colspan="3" style="color:var(--gold);font-weight:700;padding:10px 14px">合計</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="font-family:var(--mono);color:var(--text);font-weight:600">${fmtMoney(totalDisplayCost)}</td>
+    <td style="font-family:var(--mono);color:var(--text-dim);font-weight:600">${fmtMoney(totalDisplayEst)}</td>
+    <td style="font-family:var(--mono);color:var(--gold);font-weight:600">${fmtMoney(totalDisplayMarket)}</td>
+    <td class="${signClass(totalPnL)}" style="font-weight:700">${fmtMoney(totalPnL)}</td>
+    <td class="${signClass(totalPR)}" style="font-weight:700">${fmtPct(totalPR)}</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td></td>
+  </tr>` : '';
+
+  tbody.innerHTML = rows + totalRow + cashRow;
+}
+
+function addHolding() {
+  const tradeType = document.getElementById('p_tradeType').value;
+  const ticker = document.getElementById('p_ticker').value.trim();
+  const name = document.getElementById('p_name').value.trim();
+  const shares = parseFloat(document.getElementById('p_shares').value);
+  const cost = parseFloat(document.getElementById('p_cost').value);
+  const price = parseFloat(document.getElementById('p_price').value);
+  const sector = document.getElementById('p_sector').value;
+  const feeDiscount = parseFloat(document.getElementById('p_feeDiscount').value) || 6;
+  const futuresFee = tradeType === '期貨' ? (parseFloat(document.getElementById('p_futuresFee').value) || 60) : 0;
+  const marginRate = tradeType === '融資' ? 0.6 : null; // 預設上市60%
+
+  if (!name || isNaN(shares) || isNaN(cost) || isNaN(price)) {
+    toast('請填寫完整欄位'); return;
+  }
+  // 同代號 + 同交易類別才視為更新，不同類別一律新增
+  const existing = ticker !== '' ? state.holdings.find(h => h.ticker === ticker && h.tradeType === tradeType) : null;
+  const data = { tradeType, ticker, name, shares, cost, price, sector, feeDiscount, marginRate, marginDays: 0, futuresFee };
+  if (existing) {
+    Object.assign(existing, data);
+    if (!existing.costLocked) existing.manualCost = null;
+    if (!existing.marketLocked) existing.manualMarket = null;
+    toast('持倉已更新 ✓');
+  } else {
+    state.holdings.push({
+      id: Date.now().toString(), ...data,
+      manualCost: null, manualMarket: null,
+      costLocked: false, marketLocked: false,
+    });
+    toast('持倉已新增 ✓');
+  }
+  save(); clearPortfolioForm(); renderPortfolio();
+}
+
+function clearPortfolioForm() {
+  ['p_ticker','p_name','p_shares','p_cost','p_price'].forEach(id => document.getElementById(id).value = '');
+}
+
+function updatePrice(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.price = parseFloat(val) || 0;
+  h.manualMarket = null; // 改現價時重設市值為自動（shares × price）
+  // manualEst 不動：手動改過的預估收入保持固定（方案B）
+  save(); renderPortfolio();
+}
+function updateShares(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.shares = parseFloat(val) || 0;
+  h.manualCost = null;
+  h.manualMarket = null;
+  // manualEst 不動
+  save(); renderPortfolio();
+}
+function updateCost(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.cost = parseFloat(val) || 0;
+  h.manualCost = null;
+  save(); renderPortfolio();
+}
+function updateTradeType(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (h) { h.tradeType = val; save(); renderPortfolio(); }
+}
+function updateSector(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (h) { h.sector = val; save(); renderPortfolio(); }
+}
+function updateManualCost(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  const n = parseFloat(val);
+  if (isNaN(n)) return;
+  h.manualCost = n;
+  save(); renderPortfolio();
+}
+function updateManualMarket(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  const n = parseFloat(val);
+  if (isNaN(n)) return;
+  h.manualMarket = n;
+  // 若預估收入沒有手動值，同步更新
+  if (h.manualEst == null) { /* 讓 displayEst 自動跟 displayMarket */ }
+  save(); renderPortfolio();
+}
+function updateManualEst(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  const n = parseFloat(val);
+  if (isNaN(n)) return;
+  h.manualEst = n;
+  save(); renderPortfolio();
+}
+function toggleLock(id, field) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  if (field === 'cost') {
+    h.costLocked = !h.costLocked;
+    // 鎖定時：若沒有手動值先存一個（目前的自動值）
+    if (h.costLocked && h.manualCost == null) {
+      h.manualCost = h.shares * h.cost;
+    }
+    // 解鎖時：清掉手動值，回到自動值
+    if (!h.costLocked) h.manualCost = null;
+    toast(h.costLocked ? '付出成本已鎖定 🔒' : '付出成本已解鎖 🔓');
+  } else if (field === 'market') {
+    h.marketLocked = !h.marketLocked;
+    if (h.marketLocked && h.manualMarket == null) {
+      h.manualMarket = h.shares * h.price;
+    }
+    if (!h.marketLocked) h.manualMarket = null;
+    toast(h.marketLocked ? '目前市值已鎖定 🔒' : '目前市值已解鎖 🔓');
+  }
+  save(); renderPortfolio();
+}
+
+function deleteHolding(id) {
+  state.holdings = state.holdings.filter(h => h.id !== id);
+  save(); renderPortfolio();
+  toast('已刪除持倉');
+}
+
+// ════════════════════════════════════════════
+// CASHFLOW
+// ════════════════════════════════════════════
+function renderCashflow() {
+  // Populate person dropdown
+  const sel = document.getElementById('cf_person');
+  const curVal = sel.value;
+  sel.innerHTML = '<option value="">— 請選擇 —</option>';
+  (state.investors || []).forEach(inv => {
+    const opt = document.createElement('option');
+    opt.value = inv.id; opt.textContent = inv.name;
+    sel.appendChild(opt);
+  });
+  sel.value = curVal;
+
+  const cfs = state.cashflows;
+  let totalIn = 0, totalOut = 0, totalRealized = 0;
+  cfs.forEach(c => {
+    if (c.type === '入金' || c.type === '股息') totalIn += c.amount;
+    if (c.type === '出金' || c.type === '手續費') totalOut += c.amount;
+    if (c.type === '已實現') totalRealized += c.amount;
+  });
+  const netIn = totalIn + totalRealized - totalOut;
+
+  document.getElementById('cf_totalIn').textContent = fmtMoney(totalIn);
+  document.getElementById('cf_totalOut').textContent = fmtMoney(totalOut);
+  document.getElementById('cf_totalRealized').textContent = fmtMoney(totalRealized);
+  document.getElementById('cf_netIn').textContent = fmtMoney(netIn);
+  document.getElementById('cf_fundNav').textContent = fmtMoney(fundTotalNav());
+
+  const tbody = document.getElementById('cashflowTbody');
+  if (cfs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">💸</div>尚無紀錄</div></td></tr>`;
+    return;
+  }
+
+  const sorted = [...cfs].sort((a,b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+  // Build running cash balance per row
+  let running = 0;
+  const runningMap = {};
+  sorted.forEach(c => {
+    if (c.type === '入金' || c.type === '股息' || c.type === '已實現') running += c.amount;
+    else if (c.type === '出金' || c.type === '手續費') running -= c.amount;
+    runningMap[c.id] = running;
+  });
+
+  tbody.innerHTML = [...sorted].reverse().map(c => {
+    const badge = c.type === '入金' ? 'badge-green' : c.type === '出金' ? 'badge-red' : c.type === '股息' ? 'badge-gold' : c.type === '已實現' ? 'badge-green' : 'badge-blue';
+
+    // 判斷金流方向：正向類型 + 正金額 → 收入(紅)；出金類型 或 負金額 → 支出(綠)
+    const isIncome = (c.type === '入金' || c.type === '股息' || c.type === '已實現') && c.amount >= 0;
+    const amtClass = isIncome ? 'positive' : 'negative';
+    const prefix = isIncome ? '+' : '-';
+    const absAmt = Math.abs(c.amount);
+
+    const inv = (state.investors || []).find(i => i.id === c.person);
+    const personName = inv ? `<span class="badge badge-gold">${inv.name}</span>` : '<span style="color:var(--text-muted)">—</span>';
+    return `<tr>
+      <td>
+        <input type="date" value="${c.date}"
+          style="background:transparent;border:1px solid transparent;color:var(--text-dim);font-family:var(--mono);font-size:13px;border-radius:6px;padding:2px 6px;cursor:pointer;"
+          onmouseover="this.style.borderColor='var(--border)'"
+          onmouseout="this.style.borderColor='transparent'"
+          onchange="updateCashflowDate('${c.id}', this.value)" />
+      </td>
+      <td><span class="badge ${badge}">${c.type}</span></td>
+      <td>${personName}</td>
+      <td>${c.note || '—'}</td>
+      <td class="${amtClass}" style="font-family:var(--mono)">
+        <span style="margin-right:2px">${isIncome ? '+' : '-'}</span>$<input
+          type="number" value="${absAmt}" step="1"
+          style="width:100px;background:transparent;border:1px solid transparent;color:inherit;font-family:var(--mono);font-size:13px;border-radius:6px;padding:2px 4px;text-align:right;"
+          onmouseover="this.style.borderColor='var(--border)'"
+          onmouseout="this.style.borderColor='transparent'"
+          onchange="updateCashflowAmount('${c.id}', this.value)" />
+      </td>
+      <td style="color:var(--gold);font-family:var(--mono)">${fmtMoney(runningMap[c.id])}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteCashflow('${c.id}')">刪除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function addCashflow() {
+  const date = document.getElementById('cf_date').value;
+  const type = document.getElementById('cf_type').value;
+  const note = document.getElementById('cf_note').value.trim();
+  const amount = parseFloat(document.getElementById('cf_amount').value);
+  const person = document.getElementById('cf_person').value;
+  if (!date || isNaN(amount) || amount <= 0) { toast('請填寫日期與金額'); return; }
+  state.cashflows.push({ id: Date.now().toString(), date, type, note, amount, person });
+  save(); renderCashflow();
+  document.getElementById('cf_note').value = '';
+  document.getElementById('cf_amount').value = '';
+  toast('已新增紀錄 ✓');
+}
+
+function deleteCashflow(id) {
+  state.cashflows = state.cashflows.filter(c => c.id !== id);
+  save(); renderCashflow(); toast('已刪除');
+}
+function updateCashflowDate(id, val) {
+  const c = state.cashflows.find(c => c.id === id);
+  if (c && val) { c.date = val; save(); renderCashflow(); toast('日期已更新 ✓'); }
+}
+function updateCashflowAmount(id, val) {
+  const c = state.cashflows.find(c => c.id === id);
+  if (c) { c.amount = parseFloat(val) || 0; save(); renderCashflow(); toast('金額已更新 ✓'); }
+}
+
+// ════════════════════════════════════════════
+// PERFORMANCE
+// ════════════════════════════════════════════
+let navChartInstance = null, returnChartInstance = null;
+let chartRange = 'all';
+
+function setChartRange(r) { chartRange = r; renderPerformance(); }
+
+function updateNavChartColor(color) {
+  state.settings.navChartColor = color;
+  save(); renderPerformance();
+}
+
+function renderPerformance() {
+  const thisYear = new Date().getFullYear().toString();
+
+  // ── 1. 建立淨值曲線資料點：以每筆出入金為基準，計算當下累計現金
+  // 策略：每一筆出入金事件後，NAV = 到該時間點的累計現金 + 快照或估算市值
+  // 簡化：NAV時間點 = 出入金事件（累計投入）+ 快照（含市值）
+  // 合併出入金事件與手動快照，按日期排序
+  const cfEvents = [...(state.cashflows||[])]
+    .sort((a,b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+  // 建立出入金累計現金（不含市值）時間序列
+  let runningCash = 0;
+  const cfPoints = cfEvents.map(c => {
+    if (c.type==='入金'||c.type==='股息'||c.type==='已實現') runningCash += c.amount;
+    else if (c.type==='出金'||c.type==='手續費') runningCash -= c.amount;
+    return { date: c.date, cashOnly: runningCash };
+  });
+
+  // 合併快照（快照有完整NAV含市值）
+  const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
+
+  // 建立最終chartData：優先用快照，其餘用出入金累計現金估算
+  let chartData = [];
+  if (snaps.length > 0) {
+    // 先放出入金事件中早於第一個快照的點
+    const firstSnapDate = snaps[0].date;
+    cfPoints.filter(p => p.date < firstSnapDate).forEach(p => {
+      // 避免重複日期
+      if (!chartData.find(d => d.date === p.date)) {
+        chartData.push({ date: p.date, nav: p.cashOnly, type: 'cf' });
+      }
+    });
+    // 放入所有快照
+    snaps.forEach(s => {
+      const existing = chartData.findIndex(d => d.date === s.date);
+      if (existing >= 0) chartData[existing] = { date: s.date, nav: s.nav, type: 'snap' };
+      else chartData.push({ date: s.date, nav: s.nav, type: 'snap' });
+    });
+    // 出入金事件晚於最後快照的點，用 fundTotalNav() 估算（只加最後一個）
+    const lastSnapDate = snaps[snaps.length-1].date;
+    const latestCF = cfPoints.filter(p => p.date > lastSnapDate);
+    if (latestCF.length > 0) {
+      const last = latestCF[latestCF.length-1];
+      chartData.push({ date: last.date, nav: fundTotalNav(), type: 'now' });
+    }
+  } else {
+    // 沒有快照：純用出入金累計現金
+    cfPoints.forEach(p => {
+      const existing = chartData.findIndex(d => d.date === p.date);
+      if (existing >= 0) chartData[existing].nav = p.cashOnly;
+      else chartData.push({ date: p.date, nav: p.cashOnly, type: 'cf' });
+    });
+    // 加上目前淨值作為最後一點
+    if (chartData.length > 0) {
+      chartData.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav(), type: 'now' });
+    }
+  }
+
+  chartData.sort((a,b) => a.date.localeCompare(b.date));
+
+  // ── 已實現損益事件
+  const realizedCFs = cfEvents.filter(c => c.type === '已實現');
+  const totalRealized = realizedCFs.reduce((s,c) => s+c.amount, 0);
+
+  // ── 未實現損益（持倉明細加總：預估收入 − 付出成本）
+  const unrealizedPnL = state.holdings.reduce((s, h) => {
+    const totalAmt = h.shares * h.cost;
+    const displayCostH = h.manualCost != null ? h.manualCost
+      : (h.tradeType==='融資' ? Math.round(totalAmt*(1-(h.marginRate||0.6))) : totalAmt);
+    const displayEstH = h.manualEst != null ? h.manualEst : h.shares * h.price;
+    return s + (displayEstH - displayCostH);
+  }, 0);
+
+  // ── 淨投入資金（入金+已實現−出金）
+  const netDep = netDeposited();
+
+  // ── 總淨值 = 淨投入 + 未實現
+  const totalNav = netDep + unrealizedPnL;
+
+  // ── 第一筆入金（累計報酬率分母）
+  const firstDeposit = [...(state.cashflows||[])]
+    .filter(c => c.type==='入金')
+    .sort((a,b) => a.date.localeCompare(b.date))[0]?.amount || 1;
+
+  // ── 建立黃線序列（確定淨值）
+  const buildConfirmed = (pts) => pts.map(pt => {
+    let sum = 0;
+    cfEvents.filter(c => c.date <= pt.date).forEach(c => {
+      if (c.type==='入金'||c.type==='股息') sum += c.amount;
+      else if (c.type==='已實現') sum += c.amount;
+      else if (c.type==='出金'||c.type==='手續費') sum -= c.amount;
+    });
+    return sum;
+  });
+  const confirmedAll = buildConfirmed(chartData);
+
+  // ── Summary cards
+  document.getElementById('perf_totalNav').textContent = fmtMoney(totalMarketValue());
+  document.getElementById('perf_netDep').textContent = fmtMoney(netDep);
+
+  const unrealEl = document.getElementById('perf_unrealized');
+  unrealEl.textContent = fmtMoney(unrealizedPnL);
+  unrealEl.className = 'card-value ' + signClass(unrealizedPnL);
+
+  const realEl = document.getElementById('perf_realized');
+  realEl.textContent = fmtMoney(totalRealized);
+  realEl.className = 'card-value ' + signClass(totalRealized);
+
+  const noData = chartData.length === 0;
+  if (noData) {
+    ['perf_total','perf_high','perf_drawdown'].forEach(id => {
+      document.getElementById(id).textContent = '—';
+    });
+  } else {
+    // 最高獲利 = 黃線最高點
+    const maxConfirmed = Math.max(...confirmedAll);
+    // MDD = 黃線序列
+    let maxDD = 0, peak = confirmedAll[0];
+    confirmedAll.forEach(v => {
+      if (v > peak) peak = v;
+      const dd = peak > 0 ? (peak - v) / peak * 100 : 0;
+      if (dd > maxDD) maxDD = dd;
+    });
+    // 累計報酬率 = 已實現 ÷ 第一筆入金
+    const totalRet = (totalRealized / firstDeposit) * 100;
+    const el = document.getElementById('perf_total');
+    el.textContent = fmtPct(totalRet);
+    el.className = 'card-value ' + (totalRet >= 0 ? 'positive' : 'negative');
+    document.getElementById('perf_high').textContent = fmtMoney(maxConfirmed);
+    document.getElementById('perf_drawdown').textContent = maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%';
+  }
+
+  // ── 套用時間範圍
+  let data = chartData;
+  if (chartRange !== 'all') data = chartData.slice(-chartRange);
+
+  // ── Chart 1: 淨值曲線（黃線 + 上方填充區域）
+  const existingNav = Chart.getChart(document.getElementById('navChart'));
+  if (existingNav) existingNav.destroy();
+  const navColor = state.settings?.navChartColor || '#c9a84c';
+  const colorPicker = document.getElementById('navChartColor');
+  if (colorPicker) colorPicker.value = navColor;
+
+  if (data.length > 0) {
+    const ctx1 = document.getElementById('navChart').getContext('2d');
+
+    // 黃線：確定淨值序列
+    const confirmedData = buildConfirmed(data);
+
+    // 藍色虛線：倒數第二點跟黃線同高，最後一點加上未實現損益
+    const lastIdx = confirmedData.length - 1;
+    const topData = confirmedData.map((v, i) => {
+      if (i === lastIdx - 1) return v; // 倒數第二點與黃線同高
+      if (i === lastIdx) return v + unrealizedPnL; // 最後一點往上偏移
+      return null; // 其餘不顯示
+    });
+
+    const gradConfirmed = ctx1.createLinearGradient(0,0,0,320);
+    gradConfirmed.addColorStop(0, navColor + '22');
+    gradConfirmed.addColorStop(1, navColor + '00');
+
+    const dashColor = '#5b9cf6';
+
+    navChartInstance = new Chart(ctx1, {
+      type: 'line',
+      data: {
+        labels: data.map(s=>s.date),
+        datasets: [
+          {
+            label: '已確定淨值（入金＋已實現）',
+            data: confirmedData,
+            borderColor: navColor,
+            backgroundColor: gradConfirmed,
+            borderWidth: 2.5,
+            pointRadius: 4,
+            pointBackgroundColor: navColor,
+            fill: true,
+            tension: 0.3,
+            order: 1,
+          },
+          {
+            label: `未實現損益延伸（${fmtMoney(unrealizedPnL)}）`,
+            data: topData,
+            borderColor: dashColor,
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [6, 4],
+            pointRadius: 3,
+            pointBackgroundColor: dashColor,
+            fill: false,
+            tension: 0,
+            spanGaps: false,
+            order: 0,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#7a8099', font: { size: 11 }, boxWidth: 24 }
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.dataset.label.split('（')[0]}：${fmtMoney(ctx.raw)}`
+            },
+            backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1,
+            titleColor: '#7a8099', bodyColor: '#e8eaf0',
+          }
+        },
+        scales: {
+          x: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 } } },
+          y: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 }, callback: v => fmtMoney(v) } }
+        }
+      }
+    });
+  }
+
+  // ── Chart 2: 已實現損益報酬率（每筆 / 相對前次NAV）
+  const existingReturn = Chart.getChart(document.getElementById('returnChart'));
+  if (existingReturn) existingReturn.destroy();
+  if (realizedCFs.length > 0) {
+    // 每筆已實現 / 當時最近的NAV估算
+    // 用出入金累計現金作為分母（上一筆累計現金，不含這筆已實現）
+    let cumCashBefore = 0;
+    const retData = realizedCFs.map(rc => {
+      // 找這筆之前所有出入金的累計現金（不含已實現自身）
+      const beforeCash = cfEvents
+        .filter(c => (c.date < rc.date || (c.date === rc.date && c.id < rc.id)) && c.type !== '已實現')
+        .reduce((s,c) => {
+          if(c.type==='入金'||c.type==='股息') return s+c.amount;
+          if(c.type==='出金'||c.type==='手續費') return s-c.amount;
+          return s;
+        }, 0);
+      const pct = beforeCash > 0 ? (rc.amount / beforeCash * 100) : 0;
+      return { date: rc.date, note: rc.note || '已實現', amount: rc.amount, pct };
+    });
+    const retColors = retData.map(r => upColor(r.pct));
+    const ctx2 = document.getElementById('returnChart').getContext('2d');
+    returnChartInstance = new Chart(ctx2, {
+      type: 'bar',
+      data: { labels: retData.map(r=>r.date), datasets: [{
+        label: '已實現報酬率', data: retData.map(r=>r.pct),
+        backgroundColor: retColors, borderRadius: 4
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: {
+            title: ctx => retData[ctx[0].dataIndex].note,
+            label: ctx => [` 報酬率：${ctx.raw.toFixed(2)}%`, ` 金額：${fmtMoney(retData[ctx.dataIndex].amount)}`]
+          },
+          backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1,
+          titleColor: '#c9a84c', bodyColor: '#e8eaf0',
+        }},
+        scales: {
+          x: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 10 } } },
+          y: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 }, callback: v => v.toFixed(1)+'%' } }
+        }
+      }
+    });
+  }
+
+  // ── Chart 3: 今年已實現損益累計折線圖
+  const existingRealized = Chart.getChart(document.getElementById('realizedChart'));
+  if (existingRealized) existingRealized.destroy();
+  const thisYearRealized = realizedCFs
+    .filter(c => c.date.startsWith(thisYear))
+    .sort((a,b) => a.date.localeCompare(b.date));
+  if (thisYearRealized.length > 0) {
+    let cumSum = 0;
+    const cumData = thisYearRealized.map(c => {
+      cumSum += c.amount;
+      return { date: c.date, cum: cumSum, note: c.note };
+    });
+    const ctx3 = document.getElementById('realizedChart').getContext('2d');
+    const grad3 = ctx3.createLinearGradient(0,0,0,220);
+    grad3.addColorStop(0, 'rgba(62,207,142,0.3)');
+    grad3.addColorStop(1, 'rgba(62,207,142,0)');
+    new Chart(ctx3, {
+      type: 'line',
+      data: { labels: cumData.map(d=>d.date), datasets: [{
+        label: '累計已實現損益', data: cumData.map(d=>d.cum),
+        borderColor: '#3ecf8e', backgroundColor: grad3,
+        borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#3ecf8e',
+        fill: true, tension: 0.3,
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: {
+            title: ctx => cumData[ctx[0].dataIndex].note || cumData[ctx[0].dataIndex].date,
+            label: ctx => ' 累計：' + fmtMoney(ctx.raw)
+          },
+          backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1,
+          titleColor: '#3ecf8e', bodyColor: '#e8eaf0',
+        }},
+        scales: {
+          x: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 } } },
+          y: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 }, callback: v => fmtMoney(v) } }
+        }
+      }
+    });
+  }
+}
+
+// ════════════════════════════════════════════
+// COLOR CUSTOMIZATION
+// ════════════════════════════════════════════
+function applyColors() {
+  state.customColors = state.customColors || {};
+  document.querySelectorAll('[data-color-label]').forEach(input => {
+    const label = input.getAttribute('data-color-label');
+    if (label) state.customColors[label] = input.value;
+  });
+  save(); renderAllocation(); toast('顏色已套用 ✓');
+}
+function resetColors() {
+  state.customColors = {};
+  save(); renderAllocation(); toast('已重置為預設顏色');
+}
+
+// Fix COLORS reference for investor cards (use index-based)
+const COLORS = DEFAULT_COLORS;
+
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════
+let stockPieInstance = null, sectorPieInstance = null;
+
+function renderAllocation() {
+  const mv = totalMarketValue();
+  const cash = cashBalance();
+  const total = mv + cash; // 含現金的總額
+  const holdings = state.holdings;
+
+  if (holdings.length === 0 && cash <= 0) {
+    ['stockLegend','sectorLegend','allocationTbody'].forEach(id => {
+      document.getElementById(id).innerHTML = '<div class="empty"><div class="empty-icon">📊</div>尚無持倉</div>';
+    });
+    return;
+  }
+
+  const CASH_COLOR = (state.customColors||{})['現金'] || '#5b9cf6';
+
+  // ── sorted holdings and cashVal needed early
+  const sorted = [...holdings].sort((a,b) => (b.shares*b.price)-(a.shares*a.price));
+  const cashVal = Math.max(cash, 0);
+
+  // ── 顏色編輯器
+  const allLabelsList = [...sorted.map(h => h.name || h.ticker)];
+  const sectorList = [...new Set((state.holdings||[]).map(h => h.sector||'其他'))];
+  const allForEditor = [...new Set([...allLabelsList, ...sectorList, '現金'])];
+  document.getElementById('colorEditorList').innerHTML = allForEditor.map(label => {
+    const col = getLabelColor(label);
+    return `<div style="display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+      <input type="color" value="${col}" data-color-label="${label}"
+        style="width:32px;height:32px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;" />
+      <span style="font-size:13px;color:var(--text)">${label}</span>
+    </div>`;
+  }).join('');
+
+  // ── 可靠銷毀舊圖表
+  ['stockPieChart','sectorPieChart'].forEach(id => {
+    const existing = Chart.getChart(document.getElementById(id));
+    if (existing) existing.destroy();
+  });
+
+  // ── 個股佔比：同代號合併（含現金）
+  const tickerMap = {};
+  holdings.forEach(h => {
+    const key = h.ticker || h.name;
+    const label = h.name || h.ticker;
+    const mv = h.marketLocked && h.manualMarket != null ? h.manualMarket : h.shares * h.price;
+    if (!tickerMap[key]) tickerMap[key] = { label, value: 0 };
+    tickerMap[key].value += mv;
+  });
+  const aggregated = Object.values(tickerMap).sort((a,b) => b.value - a.value);
+  const stockLabels = [...aggregated.map(a => a.label), '現金'];
+  const stockData   = [...aggregated.map(a => a.value), cashVal];
+  const stockColors = stockLabels.map(l => getLabelColor(l));
+  const totalForPct = stockData.reduce((s,v) => s+v, 0);
+
+  stockPieInstance = new Chart(document.getElementById('stockPieChart'), {
+    type: 'doughnut',
+    data: { labels: stockLabels, datasets: [{ data: stockData, backgroundColor: stockColors, borderWidth: 2, borderColor: '#111318', hoverOffset: 8 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: {
+      callbacks: { label: ctx => ' ' + fmtMoney(ctx.raw) + ' (' + (totalForPct>0 ? (ctx.raw/totalForPct*100).toFixed(1) : 0) + '%)' },
+      backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0',
+    }}, cutout: '60%' }
+  });
+
+  document.getElementById('stockLegend').innerHTML = [
+    ...aggregated.map((a,i) => {
+      const w = totalForPct === 0 ? 0 : (a.value/totalForPct*100);
+      return `<li class="legend-item">
+        <span class="legend-dot" style="background:${stockColors[i]}"></span>
+        <span class="legend-name">${a.label}</span>
+        <span class="legend-pct">${w.toFixed(1)}%</span>
+      </li>`;
+    }),
+    `<li class="legend-item">
+      <span class="legend-dot" style="background:${CASH_COLOR}"></span>
+      <span class="legend-name">現金</span>
+      <span class="legend-pct" style="color:${CASH_COLOR}">${totalForPct===0?'0.0':(cashVal/totalForPct*100).toFixed(1)}%</span>
+    </li>`
+  ].join('');
+
+  // ── 產業別佔比 (含現金)
+  const sectorMap = {};
+  holdings.forEach(h => {
+    const s = h.sector || '其他';
+    sectorMap[s] = (sectorMap[s] || 0) + h.shares * h.price;
+  });
+  if (cashVal > 0) sectorMap['現金'] = (sectorMap['現金'] || 0) + cashVal;
+  const sectors = Object.entries(sectorMap).sort((a,b) => b[1]-a[1]);
+  const sectorLabels = sectors.map(s => s[0]);
+  const sectorData   = sectors.map(s => s[1]);
+  const sectorColors = sectors.map(s => getLabelColor(s[0]));
+
+  sectorPieInstance = new Chart(document.getElementById('sectorPieChart'), {
+    type: 'doughnut',
+    data: { labels: sectorLabels, datasets: [{ data: sectorData, backgroundColor: sectorColors, borderWidth: 2, borderColor: '#111318', hoverOffset: 8 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: {
+      callbacks: { label: ctx => ' ' + fmtMoney(ctx.raw) + ' (' + (totalForPct>0 ? (ctx.raw/totalForPct*100).toFixed(1) : 0) + '%)' },
+      backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0',
+    }}, cutout: '60%' }
+  });
+
+  document.getElementById('sectorLegend').innerHTML = sectors.map((s,i) => {
+    const w = total === 0 ? 0 : (s[1]/total*100);
+    return `<li class="legend-item">
+      <span class="legend-dot" style="background:${sectorColors[i]}"></span>
+      <span class="legend-name">${s[0]}</span>
+      <span class="legend-pct" style="color:${s[0]==='現金'?CASH_COLOR:'var(--gold)'}">${w.toFixed(1)}%</span>
+    </li>`;
+  }).join('');
+
+  // ── 集中度分析表：同代號合併，展開顯示各部位
+  const stockRows = aggregated.map((a, i) => {
+    const w = total === 0 ? 0 : (a.value/total*100);
+    const subs = holdings.filter(h => (h.name || h.ticker) === a.label);
+    const sector = subs[0]?.sector || '—';
+    const tradeTypes = subs.map(h => h.tradeType || '現股').join(' + ');
+    // 付出成本：同代號所有部位加總，有手動值用手動值
+    const totalPaidCost = subs.reduce((s, h) => {
+      if (h.manualCost != null) return s + h.manualCost;
+      const totalAmt = h.shares * h.cost;
+      const isMarginH = h.tradeType === '融資';
+      const selfPayRateH = 1 - (h.marginRate || 0.6);
+      return s + (isMarginH ? Math.round(totalAmt * selfPayRateH) : totalAmt);
+    }, 0);
+    return `<tr>
+      <td>
+        <span class="td-name">${a.label}</span>
+        ${subs.length > 1 ? `<span style="font-size:10px;color:var(--text-muted);margin-left:4px">${tradeTypes}</span>` : ''}
+      </td>
+      <td><span class="badge badge-blue">${sector}</span></td>
+      <td style="color:var(--gold)">${fmtMoney(a.value)}</td>
+      <td style="color:var(--text-dim)">${fmtMoney(totalPaidCost)}</td>
+      <td style="color:var(--text-dim)">${w.toFixed(2)}%</td>
+      <td>
+        <div class="weight-bar-wrap">
+          <div class="weight-bar" style="width:${Math.max(w*3,2)}px"></div>
+          <span class="weight-num">${w.toFixed(1)}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // 交割餘額 = 淨投入資金 - 付出成本（不含融資借款）
+  const netDep = netDeposited();
+  const totalPaidAll = totalCost();
+  const settlement = netDep - totalPaidAll;
+  const settlementClass = settlement >= 0 ? 'positive' : 'negative';
+  const cashW = total === 0 ? 0 : (cashVal/total*100);
+
+  // 付出成本合計（有手動值用手動值，否則用自動計算值）
+  const totalCostAll = holdings.reduce((s, h) => {
+    if (h.manualCost != null) return s + h.manualCost;
+    const totalAmt = h.shares * h.cost;
+    const isMarginH = h.tradeType === '融資';
+    const selfPayRateH = 1 - (h.marginRate || 0.6);
+    return s + (isMarginH ? Math.round(totalAmt * selfPayRateH) : totalAmt);
+  }, 0);
+
+  // 淨投入資金列（最上方）
+  const netDepRow = `<tr style="border-bottom:2px solid var(--border);background:rgba(201,168,76,0.04)">
+    <td><span class="td-name" style="color:var(--gold)">淨投入資金</span></td>
+    <td><span class="badge" style="background:rgba(201,168,76,0.15);color:var(--gold)">現金</span></td>
+    <td style="color:var(--gold)">${fmtMoney(netDep)}</td>
+    <td style="color:var(--gold);font-weight:600">${fmtMoney(netDep)}</td>
+    <td style="color:var(--text-dim)">—</td>
+    <td></td>
+  </tr>`;
+
+  // 交割餘額列：市值欄空白，付出成本欄顯示交割餘額
+  const cashRow = `<tr style="border-top:1px solid var(--border);background:rgba(91,156,246,0.04)">
+    <td><span class="td-name" style="color:${CASH_COLOR}">交割餘額</span> <span class="td-ticker">CASH</span></td>
+    <td><span class="badge" style="background:rgba(91,156,246,0.15);color:${CASH_COLOR}">現金</span></td>
+    <td style="color:var(--text-dim)">—</td>
+    <td class="${settlementClass}" style="font-weight:600">${fmtMoney(settlement)}</td>
+    <td style="color:${CASH_COLOR}">${cashW.toFixed(2)}%</td>
+    <td>
+      <div class="weight-bar-wrap">
+        <div class="weight-bar" style="width:${Math.max(Math.abs(cashW)*3,2)}px;background:${CASH_COLOR}"></div>
+        <span class="weight-num" style="color:${CASH_COLOR}">${cashW.toFixed(1)}%</span>
+      </div>
+    </td>
+  </tr>`;
+
+  const totalMV = aggregated.reduce((s,a) => s+a.value, 0);
+  const totalRow = `<tr style="border-top:2px solid var(--gold-dim);background:rgba(201,168,76,0.05)">
+    <td style="color:var(--gold);font-weight:700">合計</td>
+    <td></td>
+    <td style="color:var(--gold);font-weight:700">${fmtMoney(totalMV)}</td>
+    <td style="color:var(--text-dim);font-weight:700">${fmtMoney(totalCostAll)}</td>
+    <td style="color:var(--gold);font-weight:700">${total > 0 ? (totalMV/total*100).toFixed(2) : 0}%</td>
+    <td></td>
+  </tr>`;
+
+  document.getElementById('allocationTbody').innerHTML = netDepRow + stockRows + cashRow + totalRow;
+}
+
+// ════════════════════════════════════════════
+// SETTINGS
+// ════════════════════════════════════════════
+function renderSettings() {
+  const s = state.settings;
+  document.getElementById('s_fundName').value = s.fundName || '';
+  document.getElementById('s_currency').value = s.currency || 'TWD';
+  document.getElementById('s_initNav').value = s.initNav || '';
+  document.getElementById('s_startDate').value = s.startDate || '';
+}
+function saveSettings() {
+  state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
+  state.settings.currency = document.getElementById('s_currency').value;
+  state.settings.initNav = parseFloat(document.getElementById('s_initNav').value) || 0;
+  state.settings.startDate = document.getElementById('s_startDate').value;
+  document.getElementById('fundNameDisplay').textContent = state.settings.fundName;
+  save(); toast('設定已儲存 ✓');
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `fund_backup_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  toast('資料已匯出 ✓');
+}
+function importData() { document.getElementById('importFile').click(); }
+function handleImport(e) {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      state = d; save(); renderPage('settings');
+      document.getElementById('fundNameDisplay').textContent = state.settings.fundName || '我的基金';
+      toast('資料已匯入 ✓');
+    } catch { toast('匯入失敗，請確認 JSON 格式'); }
+  };
+  r.readAsText(f);
+}
+function clearAllData() {
+  if (!confirm('確定要清除所有資料？此操作無法復原。')) return;
+  const fresh = emptyAccount('帳戶 A');
+  accounts = [fresh];
+  currentAccountId = fresh.id;
+  state = fresh;
+  localStorage.removeItem('fundMgr_v3');
+  localStorage.removeItem('fundMgr_v2');
+  save(); location.reload();
+}
+
+// ════════════════════════════════════════════
+// PROFIT DISTRIBUTION
+// ════════════════════════════════════════════
+let invNavChartInstance = null;
+
+// ── 計算每位投資人的「個人追加資金」（協議池以外的入金）
+function getPersonalExtra(investorId) {
+  // 協議池由 investor.contractPool 定義，個人追加 = 該人所有入金 - 協議池貢獻
+  // 協議池貢獻已記錄在 investor.contractPool，個人追加入金從cashflow取
+  const inv = (state.investors || []).find(i => i.id === investorId);
+  if (!inv) return 0;
+  // 協議池本金已算在 inv.contractPool，個人追加 = 額外入金（超過協議池的部分）
+  const personalIn = (state.cashflows || [])
+    .filter(c => c.person === investorId && (c.type === '入金'))
+    .reduce((s, c) => s + c.amount, 0);
+  const personalOut = (state.cashflows || [])
+    .filter(c => c.person === investorId && (c.type === '出金'))
+    .reduce((s, c) => s + c.amount, 0);
+  // 扣除協議池本金，剩下才是追加
+  const extra = personalIn - (inv.contractPool || 0) - personalOut;
+  return Math.max(extra, 0);
+}
+
+// ── 計算每位投資人當前淨值
+// 個人淨值 = 所有入金 - 所有出金 + 累積分得獲利
+function calcInvestorNav(investorId) {
+  const personalIn = (state.cashflows || [])
+    .filter(c => c.person === investorId && (c.type === '入金' || c.type === '股息'))
+    .reduce((s, c) => s + c.amount, 0);
+  const personalOut = (state.cashflows || [])
+    .filter(c => c.person === investorId && (c.type === '出金' || c.type === '手續費'))
+    .reduce((s, c) => s + c.amount, 0);
+  const totalDistProfit = (state.profitDists || []).reduce((s, d) => {
+    const item = d.items.find(it => it.investorId === investorId);
+    return s + (item ? item.total : 0);
+  }, 0);
+  return personalIn - personalOut + totalDistProfit;
+}
+
+// ── 計算協議池總額
+function totalContractPool() {
+  return (state.investors || []).reduce((s, inv) => s + (inv.contractPool || 0), 0);
+}
+
+// ── 計算整體基金總額（協議池 + 所有人追加）
+function totalFundCapital() {
+  return (state.investors || []).reduce((s, inv) => {
+    return s + (inv.contractPool || 0) + getPersonalExtra(inv.id);
+  }, 0);
+}
+
+// ── 預覽分配結果
+function previewDistribution() {
+  const totalProfit = parseFloat(document.getElementById('dist_profit').value) || 0;
+  const investors = state.investors || [];
+  if (investors.length === 0 || totalProfit === 0) {
+    document.getElementById('dist_preview').style.display = 'none';
+    return;
+  }
+
+  const fundCapital = totalFundCapital();
+  const contractPool = totalContractPool();
+  const items = computeDistItems(totalProfit, contractPool, fundCapital);
+
+  document.getElementById('dist_preview').style.display = 'block';
+  document.getElementById('dist_preview_table').innerHTML = `
+    <table style="width:100%">
+      <thead>
+        <tr>
+          <th>投資人</th>
+          <th>角色</th>
+          <th>協議分潤</th>
+          <th>追加資金分潤</th>
+          <th style="color:var(--gold)">合計分得</th>
+          <th>目前個人淨值</th>
+          <th>分配後淨值</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(it => {
+          const inv = investors.find(i => i.id === it.investorId);
+          const curNav = calcInvestorNav(it.investorId);
+          const afterNav = curNav + it.total;
+          return `<tr>
+            <td class="td-name">${inv.name}</td>
+            <td><span class="badge badge-blue">${inv.role}</span></td>
+            <td class="${signClass(it.fromContract)}">${fmtMoney(it.fromContract)}</td>
+            <td class="${signClass(it.fromPersonal)}">${fmtMoney(it.fromPersonal)}</td>
+            <td style="color:var(--gold);font-weight:600">${fmtMoney(it.total)}</td>
+            <td style="color:var(--text-dim)">${fmtMoney(curNav)}</td>
+            <td class="${signClass(afterNav - curNav)}">${fmtMoney(afterNav)}</td>
+          </tr>`;
+        }).join('')}
+        <tr style="border-top:2px solid var(--border)">
+          <td colspan="4" style="color:var(--text-dim);padding:10px 14px">合計</td>
+          <td style="color:var(--gold);font-weight:600">${fmtMoney(items.reduce((s,it)=>s+it.total,0))}</td>
+          <td></td><td></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:12px;font-size:12px;color:var(--text-dim)">
+      協議池：${fmtMoney(contractPool)} ／ 基金總資本：${fmtMoney(fundCapital)} ／ 協議池獲利：${fmtMoney(totalProfit * (fundCapital>0 ? contractPool/fundCapital : 0))}
+    </div>
+  `;
+}
+
+// ── 核心計算：依協議池 + 個人追加分潤
+function computeDistItems(totalProfit, contractPool, fundCapital) {
+  const investors = state.investors || [];
+  if (fundCapital === 0) return investors.map(inv => ({ investorId: inv.id, fromContract: 0, fromPersonal: 0, total: 0 }));
+
+  // 獲利拆分
+  const contractProfit = totalProfit * (contractPool / fundCapital);
+  const remainProfit = totalProfit - contractProfit; // 個人追加部分獲利
+
+  // 協議池總分潤比例加總（歸一化用）
+  const totalRatio = investors.reduce((s, inv) => s + (inv.profitRatio || 0), 0);
+
+  return investors.map(inv => {
+    // 協議分潤
+    const myRatio = totalRatio > 0 ? (inv.profitRatio || 0) / totalRatio : 0;
+    const fromContract = contractProfit * myRatio;
+
+    // 個人追加資金分潤
+    const personalExtra = getPersonalExtra(inv.id);
+    const allPersonalExtra = investors.reduce((s, i) => s + getPersonalExtra(i.id), 0);
+    const fromPersonal = allPersonalExtra > 0 ? remainProfit * (personalExtra / allPersonalExtra) : 0;
+
+    return { investorId: inv.id, fromContract, fromPersonal, total: fromContract + fromPersonal };
+  });
+}
+
+function addInvestor() {
+  const name = document.getElementById('inv_name').value.trim();
+  const role = document.getElementById('inv_role').value;
+  const ratio = parseFloat(document.getElementById('inv_ratio').value);
+  const pool = parseFloat(document.getElementById('inv_pool').value) || 0;
+  if (!name || isNaN(ratio)) { toast('請填寫姓名與分潤比例'); return; }
+
+  state.investors = state.investors || [];
+  state.investors.push({ id: Date.now().toString(), name, role, profitRatio: ratio, contractPool: pool });
+  save(); renderProfit();
+  document.getElementById('inv_name').value = '';
+  document.getElementById('inv_ratio').value = '';
+  document.getElementById('inv_pool').value = '';
+  toast(`已新增投資人：${name} ✓`);
+}
+
+function deleteInvestor(id) {
+  if (!confirm('確定刪除此投資人？相關分配紀錄不會刪除。')) return;
+  state.investors = (state.investors || []).filter(i => i.id !== id);
+  save(); renderProfit(); toast('已刪除');
+}
+
+function confirmDistribution() {
+  const date = document.getElementById('dist_date').value;
+  const period = document.getElementById('dist_period').value.trim();
+  const totalProfit = parseFloat(document.getElementById('dist_profit').value);
+  if (!date || !period || isNaN(totalProfit) || totalProfit === 0) {
+    toast('請填寫完整欄位'); return;
+  }
+  const fundCapital = totalFundCapital();
+  const contractPool = totalContractPool();
+  const items = computeDistItems(totalProfit, contractPool, fundCapital);
+
+  state.profitDists = state.profitDists || [];
+  state.profitDists.push({ id: Date.now().toString(), date, period, totalProfit, contractPool, items });
+
+  // 自動新增一筆「已實現損益」到出入金
+  state.cashflows.push({
+    id: (Date.now() + 1).toString(),
+    date,
+    type: '已實現',
+    note: `${period} 獲利分配`,
+    amount: totalProfit,
+    person: '',
+    autoGenerated: true,
+  });
+
+  save(); renderProfit(); renderCashflow();
+  document.getElementById('dist_profit').value = '';
+  document.getElementById('dist_period').value = '';
+  document.getElementById('dist_preview').style.display = 'none';
+  toast('獲利分配已儲存，並自動寫入出入金 ✓');
+}
+
+function deleteDistribution(id) {
+  state.profitDists = (state.profitDists || []).filter(d => d.id !== id);
+  save(); renderProfit(); toast('已刪除分配紀錄');
+}
+
+function renderProfit() {
+  const investors = state.investors || [];
+  const dists = state.profitDists || [];
+
+  // Investor cards
+  const totalNav = investors.reduce((s, inv) => s + calcInvestorNav(inv.id), 0);
+  const totalRatio = investors.reduce((s, inv) => s + (inv.profitRatio || 0), 0);
+
+  // ── 出資比 vs 協議分潤 對照表
+  const ratioCheckEl = document.getElementById('inv_ratioCheck');
+  if (investors.length === 0) {
+    ratioCheckEl.innerHTML = '';
+  } else {
+    // 計算每人在出入金裡的實際累計入金
+    const totalActualIn = investors.reduce((s, inv) => {
+      const personalIn = (state.cashflows || [])
+        .filter(c => c.person === inv.id && c.type === '入金')
+        .reduce((a, c) => a + c.amount, 0);
+      return s + (inv.contractPool || 0) + Math.max(personalIn - (inv.contractPool || 0), 0);
+    }, 0);
+
+    const totalRatio = investors.reduce((s, inv) => s + (inv.profitRatio || 0), 0);
+    const ratioOk = Math.abs(totalRatio - 100) < 0.1;
+
+    const rows = investors.map((inv, idx) => {
+      // 實際出資 = 協議池本金 + 個人追加入金
+      const personalIn = (state.cashflows || [])
+        .filter(c => c.person === inv.id && c.type === '入金')
+        .reduce((a, c) => a + c.amount, 0);
+      const actualCapital = (inv.contractPool || 0) + Math.max(personalIn - (inv.contractPool || 0), 0);
+      const actualPct = totalActualIn > 0 ? (actualCapital / totalActualIn * 100) : 0;
+      const agreePct = inv.profitRatio || 0;
+      const diff = agreePct - actualPct;
+      const diffClass = Math.abs(diff) < 0.5 ? 'neutral' : diff > 0 ? 'positive' : 'negative';
+      const diffSign = diff >= 0 ? '+' : '';
+      const color = COLORS[idx % COLORS.length];
+      // warning if diff > 15%
+      const warn = Math.abs(diff) > 15 ? '⚠' : '';
+      return `<tr>
+        <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span>${inv.name}</td>
+        <td style="font-family:var(--mono)">${fmtMoney(actualCapital)}</td>
+        <td style="font-family:var(--mono)">${actualPct.toFixed(1)}%</td>
+        <td style="font-family:var(--mono);color:var(--gold)">${agreePct.toFixed(1)}%</td>
+        <td class="${diffClass}" style="font-family:var(--mono)">${diffSign}${diff.toFixed(1)}% ${warn}</td>
+      </tr>`;
+    }).join('');
+
+    ratioCheckEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;">
+        <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:12px;">
+          出資比例 vs 協議分潤 對照
+          <span style="margin-left:12px;font-size:12px;color:${ratioOk ? 'var(--green)' : 'var(--red)'}">
+            分潤合計：${totalRatio.toFixed(1)}% ${ratioOk ? '✓' : '⚠ 需等於100%'}
+          </span>
+        </div>
+        <table style="width:100%;font-size:13px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:6px 12px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">投資人</th>
+              <th style="text-align:right;padding:6px 12px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">實際出資額</th>
+              <th style="text-align:right;padding:6px 12px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">實際出資佔比</th>
+              <th style="text-align:right;padding:6px 12px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">協議分潤比例</th>
+              <th style="text-align:right;padding:6px 12px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">差異</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">
+          差異 = 協議分潤 − 實際出資佔比　｜　⚠ 差異超過15%請留意是否符合約定
+        </div>
+      </div>`;
+  }
+
+  if (investors.length === 0) {
+    document.getElementById('investorCards').innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">👥</div>請先新增投資人</div>`;
+  } else {
+    document.getElementById('investorCards').innerHTML = investors.map((inv, idx) => {
+      const nav = calcInvestorNav(inv.id);
+      const pct = totalNav > 0 ? (nav / totalNav * 100) : 0;
+
+      // 實際累計入金（從出入金紀錄自動算）
+      const actualIn = (state.cashflows || [])
+        .filter(c => c.person === inv.id && (c.type === '入金' || c.type === '股息'))
+        .reduce((s, c) => s + c.amount, 0);
+      const actualOut = (state.cashflows || [])
+        .filter(c => c.person === inv.id && (c.type === '出金' || c.type === '手續費'))
+        .reduce((s, c) => s + c.amount, 0);
+
+      const totalDistProfit = dists.reduce((s, d) => {
+        const item = d.items.find(it => it.investorId === inv.id);
+        return s + (item ? item.total : 0);
+      }, 0);
+      const color = COLORS[idx % COLORS.length];
+      return `<div class="card" style="border-color:${color}33;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${color}"></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:var(--text)">${inv.name}</div>
+            <span class="badge badge-blue" style="margin-top:4px">${inv.role}</span>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:11px;color:var(--text-dim)">佔總淨值</div>
+            <div style="font-family:var(--mono);font-size:18px;font-weight:700;color:${color}">${pct.toFixed(1)}%</div>
+          </div>
+        </div>
+        <table style="width:100%;font-size:12px;">
+          <tr><td style="color:var(--text-dim);padding:3px 0">協議約定本金</td><td style="text-align:right;font-family:var(--mono);color:var(--text-dim)">${fmtMoney(inv.contractPool||0)}</td></tr>
+          <tr><td style="color:var(--text-dim);padding:3px 0">實際累計入金</td><td style="text-align:right;font-family:var(--mono);color:var(--text)">${fmtMoney(actualIn)}</td></tr>
+          <tr><td style="color:var(--text-dim);padding:3px 0">累計出金</td><td style="text-align:right;font-family:var(--mono);color:#f59e0b">${actualOut > 0 ? '-' + fmtMoney(actualOut) : fmtMoney(0)}</td></tr>
+          <tr><td style="color:var(--text-dim);padding:3px 0">累積分得獲利</td><td style="text-align:right;font-family:var(--mono)" class="${signClass(totalDistProfit)}">${fmtMoney(totalDistProfit)}</td></tr>
+          <tr><td style="color:var(--text-dim);padding:3px 0">協議分潤比例</td><td style="text-align:right;font-family:var(--mono);color:var(--gold)">${inv.profitRatio}%</td></tr>
+        </table>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:11px;color:var(--text-dim)">當前淨值</span>
+          <span style="font-family:var(--mono);font-size:20px;font-weight:700;color:${color}">${fmtMoney(nav)}</span>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px;">
+          <button class="btn btn-outline btn-sm" onclick="editInvestor('${inv.id}')">編輯</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteInvestor('${inv.id}')">刪除</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Set dist date default
+  const di = document.getElementById('dist_date');
+  if (!di.value) di.value = new Date().toISOString().slice(0,10);
+
+  // History table
+  const tbody = document.getElementById('distHistoryTbody');
+  if (dists.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div>尚無分配紀錄</div></td></tr>`;
+  } else {
+    // Build dynamic headers
+    const thCols = document.getElementById('dist_th_cols');
+    if (thCols) thCols.outerHTML = investors.map(inv => `<th>${inv.name} 分得</th>`).join('') + '<th>操作</th>';
+
+    tbody.innerHTML = [...dists].reverse().map(d => {
+      const invCols = investors.map(inv => {
+        const item = d.items.find(it => it.investorId === inv.id);
+        const v = item ? item.total : null;
+        return `<td class="${v!=null?signClass(v):'neutral'}">${v!=null ? fmtMoney(v) : '—'}</td>`;
+      }).join('');
+      return `<tr>
+        <td style="color:var(--gold)">${d.period}</td>
+        <td style="color:var(--text-dim)">${d.date}</td>
+        <td class="${signClass(d.totalProfit)}">${fmtMoney(d.totalProfit)}</td>
+        <td style="color:var(--text-dim)">${fmtMoney(d.contractPool)}</td>
+        ${invCols}
+        <td><button class="btn btn-danger btn-sm" onclick="deleteDistribution('${d.id}')">刪除</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Investor NAV chart
+  if (invNavChartInstance) invNavChartInstance.destroy();
+  const existingInvChart = Chart.getChart(document.getElementById('investorNavChart'));
+  if (existingInvChart) existingInvChart.destroy();
+  if (dists.length === 0 || investors.length === 0) return;
+
+  // Build cumulative nav over time per investor
+  const sortedDists = [...dists].sort((a,b) => a.date.localeCompare(b.date));
+  const labels = sortedDists.map(d => d.period || d.date);
+  const datasets = investors.map((inv, idx) => {
+    let cumNav = (inv.contractPool || 0) + getPersonalExtra(inv.id);
+    const data = sortedDists.map(d => {
+      const item = d.items.find(it => it.investorId === inv.id);
+      cumNav += item ? item.total : 0;
+      return cumNav;
+    });
+    return {
+      label: inv.name,
+      data,
+      borderColor: COLORS[idx % COLORS.length],
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 4,
+      pointBackgroundColor: COLORS[idx % COLORS.length],
+      tension: 0.3,
+    };
+  });
+
+  const ctx = document.getElementById('investorNavChart').getContext('2d');
+  invNavChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, labels: { color: '#7a8099', font: { size: 12 } } },
+        tooltip: {
+          callbacks: { label: ctx => ` ${ctx.dataset.label}：${fmtMoney(ctx.raw)}` },
+          backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1,
+          titleColor: '#7a8099', bodyColor: '#e8eaf0',
+        }
+      },
+      scales: {
+        x: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 } } },
+        y: { grid: { color: '#1a1d25' }, ticks: { color: '#7a8099', font: { size: 11 }, callback: v => fmtMoney(v) } }
+      }
+    }
+  });
+}
+
+function editInvestor(id) {
+  const inv = (state.investors || []).find(i => i.id === id);
+  if (!inv) return;
+  const name = prompt('姓名', inv.name);
+  if (!name) return;
+  const ratio = parseFloat(prompt('協議分潤比例 (%)', inv.profitRatio));
+  if (isNaN(ratio)) return;
+  const pool = parseFloat(prompt('協議池本金', inv.contractPool || 0));
+  inv.name = name;
+  inv.profitRatio = ratio;
+  inv.contractPool = isNaN(pool) ? inv.contractPool : pool;
+  save(); renderProfit(); toast('已更新投資人設定 ✓');
+}
+
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ════════════════════════════════════════════
+// READONLY MODE
+// ════════════════════════════════════════════
+function toggleReadonly() {
+  const isReadonly = document.body.classList.contains('readonly');
+  if (isReadonly) {
+    // 目前唯讀 → 要解鎖，需要輸入密碼
+    const pwd = prompt('請輸入密碼以進入編輯模式：');
+    if (pwd === 'nini7520') {
+      document.body.classList.remove('readonly');
+      localStorage.setItem('fundMgr_readonly', '0');
+      const btn = document.getElementById('readonlyBtn');
+      btn.textContent = '✏️ 編輯中';
+      toast('編輯模式已開啟 ✓');
+    } else if (pwd !== null) {
+      toast('密碼錯誤 ✗');
+    }
+  } else {
+    // 目前編輯 → 鎖定回唯讀
+    document.body.classList.add('readonly');
+    localStorage.setItem('fundMgr_readonly', '1');
+    const btn = document.getElementById('readonlyBtn');
+    btn.textContent = '🔒 唯讀';
+    toast('已切換回唯讀模式');
+  }
+}
+function initReadonly() {
+  // 預設唯讀，除非本地有解鎖記錄
+  const saved = localStorage.getItem('fundMgr_readonly');
+  if (saved === '0') {
+    document.body.classList.remove('readonly');
+    const btn = document.getElementById('readonlyBtn');
+    if (btn) btn.textContent = '✏️ 編輯中';
+  } else {
+    document.body.classList.add('readonly');
+    const btn = document.getElementById('readonlyBtn');
+    if (btn) btn.textContent = '🔒 唯讀';
+  }
+}
+
+// ════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════
+function initApp() {
+  load();
+  if (!state.investors) state.investors = [];
+  if (!state.profitDists) state.profitDists = [];
+  if (!state.realizedPnL) state.realizedPnL = [];
+  if (!state.customColors) state.customColors = {};
+  document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
+  document.getElementById('headerDate').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+  document.getElementById('cf_date').value = new Date().toISOString().slice(0,10);
+  renderAccountBar();
+  renderOverview();
+  initReadonly();
+  setTimeout(() => loadFromFirebase(), 500);
+}
+window.initApp = initApp;
+
+// 若 Firebase 模組已就緒則立即初始化，否則等 DOMContentLoaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
+</script>
+</body>
+</html>
