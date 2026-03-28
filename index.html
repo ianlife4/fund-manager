@@ -1042,6 +1042,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <label class="form-label">起始日期</label>
             <input class="form-input" id="s_startDate" type="date" />
           </div>
+          <div class="form-group">
+            <label class="form-label">查看密碼（其他人需輸入此密碼才能查看此頁籤，留空則開放）</label>
+            <input class="form-input" id="s_viewPassword" type="text" placeholder="留空 = 不設密碼" />
+          </div>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;">
           <button class="btn btn-gold" onclick="saveSettings()">儲存設定</button>
@@ -1095,6 +1099,7 @@ function emptyAccount(name = '帳戶') {
     investors: [],
     profitDists: [],
     customColors: {},
+    viewPassword: '',
   };
 }
 
@@ -1106,6 +1111,21 @@ function getCurrentAccount() {
 }
 
 function switchAccount(id) {
+  const acct = accounts.find(a => a.id === id);
+  if (!acct) return;
+  const isEditing = !document.body.classList.contains('readonly');
+  if (acct.viewPassword && !isEditing) {
+    const unlocked = sessionStorage.getItem('fundMgr_unlocked_' + id);
+    if (!unlocked) {
+      const pwd = prompt(`「${acct.name}」需要密碼才能查看：`);
+      if (pwd === acct.viewPassword) {
+        sessionStorage.setItem('fundMgr_unlocked_' + id, '1');
+      } else {
+        if (pwd !== null) toast('密碼錯誤 ✗');
+        return;
+      }
+    }
+  }
   currentAccountId = id;
   localStorage.setItem('fundMgr_currentAcct', id);
   state = getCurrentAccount();
@@ -1114,11 +1134,16 @@ function switchAccount(id) {
 }
 
 function addAccount() {
-  const name = `帳戶 ${String.fromCharCode(65 + accounts.length)}`;
-  const acct = emptyAccount(name);
+  const defaultName = `帳戶 ${String.fromCharCode(65 + accounts.length)}`;
+  const name = prompt('新帳戶名稱：', defaultName);
+  if (name === null) return;
+  const acct = emptyAccount(name.trim() || defaultName);
+  const pwd = prompt('設定查看密碼（留空則所有人可查看）：');
+  if (pwd !== null) acct.viewPassword = pwd.trim();
   accounts.push(acct);
   currentAccountId = acct.id;
   state = acct;
+  if (acct.viewPassword) sessionStorage.setItem('fundMgr_unlocked_' + acct.id, '1');
   saveAllAccounts();
   renderAccountBar();
   renderPage('overview');
@@ -1156,6 +1181,7 @@ function renderAccountBar() {
         onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}"
         onclick="event.stopPropagation()"
       >${acct.name}</span>
+      ${acct.viewPassword ? `<span style="font-size:10px;opacity:0.45;margin-left:2px;">🔒</span>` : ''}
       ${accounts.length > 1 ? `<span class="acct-tab-close" onclick="event.stopPropagation();closeAccount('${acct.id}')">✕</span>` : ''}
     </div>
   `).join('') + `<button class="acct-add" onclick="addAccount()" title="新增帳戶">＋</button>`;
@@ -2609,13 +2635,19 @@ function renderSettings() {
   document.getElementById('s_currency').value = s.currency || 'TWD';
   document.getElementById('s_initNav').value = s.initNav || '';
   document.getElementById('s_startDate').value = s.startDate || '';
+  document.getElementById('s_viewPassword').value = state.viewPassword || '';
 }
 function saveSettings() {
   state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
   state.settings.currency = document.getElementById('s_currency').value;
   state.settings.initNav = parseFloat(document.getElementById('s_initNav').value) || 0;
   state.settings.startDate = document.getElementById('s_startDate').value;
+  state.viewPassword = document.getElementById('s_viewPassword').value.trim();
+  const acct = accounts.find(a => a.id === currentAccountId);
+  if (acct) { acct.name = state.settings.fundName; acct.viewPassword = state.viewPassword; }
+  state.name = state.settings.fundName;
   document.getElementById('fundNameDisplay').textContent = state.settings.fundName;
+  renderAccountBar();
   save(); toast('設定已儲存 ✓');
 }
 
