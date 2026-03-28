@@ -1301,11 +1301,28 @@ async function loadFromFirebase() {
   } catch(e) { setSyncStatus('err'); }
 }
 
+function enforceAccountPassword() {
+  const isEditing = !document.body.classList.contains('readonly');
+  if (isEditing) return;
+  const acct = getCurrentAccount();
+  if (acct && acct.viewPassword) {
+    const unlocked = sessionStorage.getItem('fundMgr_unlocked_' + acct.id);
+    if (!unlocked) {
+      const publicAcct = accounts.find(a => !a.viewPassword);
+      if (publicAcct) {
+        currentAccountId = publicAcct.id;
+        state = publicAcct;
+      }
+    }
+  }
+}
+
 function refreshAllViews() {
   if (!state.investors) state.investors = [];
   if (!state.profitDists) state.profitDists = [];
   if (!state.realizedPnL) state.realizedPnL = [];
   if (!state.customColors) state.customColors = {};
+  enforceAccountPassword();
   document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
   renderAccountBar();
   const activePage = document.querySelector('.page.active');
@@ -3155,9 +3172,10 @@ function initApp() {
   document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
   document.getElementById('headerDate').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   document.getElementById('cf_date').value = new Date().toISOString().slice(0,10);
+  initReadonly();
+  enforceAccountPassword();
   renderAccountBar();
   renderOverview();
-  initReadonly();
   setTimeout(() => loadFromFirebase(), 500);
 }
 window.initApp = initApp;
