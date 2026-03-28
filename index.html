@@ -514,6 +514,23 @@ document.addEventListener('DOMContentLoaded', () => {
 </head>
 <body>
 
+<!-- ══════ LOGIN OVERLAY ══════ -->
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(10,12,16,0.97);backdrop-filter:blur(8px);align-items:center;justify-content:center;">
+  <div style="width:360px;padding:48px 40px;background:var(--surface);border:1px solid var(--border);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,0.6);text-align:center;">
+    <div style="width:52px;height:52px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:26px;color:#0a0c10;font-weight:700;margin:0 auto 20px;">F</div>
+    <div style="font-family:var(--serif);font-size:22px;color:var(--gold);margin-bottom:4px;">Ianker 績效紀錄</div>
+    <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:36px;">Portfolio Manager</div>
+    <input id="loginPwd" type="password" placeholder="請輸入密碼"
+      onkeydown="if(event.key==='Enter')attemptLogin()"
+      style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.1em;" />
+    <button onclick="attemptLogin()"
+      style="width:100%;padding:13px;background:var(--gold);color:#0a0c10;border:none;border-radius:10px;font-size:15px;font-weight:700;font-family:var(--sans);cursor:pointer;transition:background 0.2s;">
+      進入
+    </button>
+    <div id="loginError" style="margin-top:14px;font-size:13px;color:var(--red);min-height:18px;"></div>
+  </div>
+</div>
+
 <header class="header">
   <div class="header-left">
     <div class="logo-mark">F</div>
@@ -1042,13 +1059,28 @@ document.addEventListener('DOMContentLoaded', () => {
             <label class="form-label">起始日期</label>
             <input class="form-input" id="s_startDate" type="date" />
           </div>
-          <div class="form-group">
-            <label class="form-label">查看密碼（其他人需輸入此密碼才能查看此頁籤，留空則開放）</label>
-            <input class="form-input" id="s_viewPassword" type="text" placeholder="留空 = 不設密碼" />
-          </div>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;">
           <button class="btn btn-gold" onclick="saveSettings()">儲存設定</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section readonly-hide">
+      <div class="section-header"><span class="section-title">密碼管理</span></div>
+      <div class="section-body">
+        <div class="form-grid" style="max-width:600px">
+          <div class="form-group">
+            <label class="form-label">此頁籤的查看密碼（訪客輸入此密碼可進入此頁籤）</label>
+            <input class="form-input" id="s_viewPassword" type="text" placeholder="留空 = 不設密碼" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">萬用密碼（輸入此密碼可查看全部頁籤）</label>
+            <input class="form-input" id="s_masterPassword" type="text" placeholder="留空 = 不設萬用密碼" />
+          </div>
+        </div>
+        <div style="margin-top:16px;">
+          <button class="btn btn-gold" onclick="savePasswords()">儲存密碼設定</button>
         </div>
       </div>
     </div>
@@ -1086,6 +1118,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // accounts = [ { id, name, ...stateFields }, ... ]
 let accounts = [];
 let currentAccountId = null;
+let globalSettings = { masterPassword: '0820' };
+let loginState = null; // null=未登入 | { type:'owner'|'master'|'tab', accountId }
 
 function emptyAccount(name = '帳戶') {
   return {
@@ -1111,21 +1145,8 @@ function getCurrentAccount() {
 }
 
 function switchAccount(id) {
-  const acct = accounts.find(a => a.id === id);
-  if (!acct) return;
-  const isEditing = !document.body.classList.contains('readonly');
-  if (acct.viewPassword && !isEditing) {
-    const unlocked = sessionStorage.getItem('fundMgr_unlocked_' + id);
-    if (!unlocked) {
-      const pwd = prompt(`「${acct.name}」需要密碼才能查看：`);
-      if (pwd === acct.viewPassword) {
-        sessionStorage.setItem('fundMgr_unlocked_' + id, '1');
-      } else {
-        if (pwd !== null) toast('密碼錯誤 ✗');
-        return;
-      }
-    }
-  }
+  const visible = getVisibleAccounts();
+  if (!visible.find(a => a.id === id)) return;
   currentAccountId = id;
   localStorage.setItem('fundMgr_currentAcct', id);
   state = getCurrentAccount();
@@ -1170,21 +1191,29 @@ function closeAccount(id) {
   renderPage('overview');
 }
 
+function getVisibleAccounts() {
+  if (!loginState) return [];
+  if (loginState.type === 'tab') return accounts.filter(a => a.id === loginState.accountId);
+  return accounts; // owner or master sees all
+}
+
 function renderAccountBar() {
   const bar = document.getElementById('accountBar');
   if (!bar) return;
-  bar.innerHTML = accounts.map(acct => `
+  const visible = getVisibleAccounts();
+  const isOwner = loginState?.type === 'owner';
+  bar.innerHTML = visible.map(acct => `
     <div class="acct-tab ${acct.id === currentAccountId ? 'active' : ''}" onclick="switchAccount('${acct.id}')">
       <span class="acct-tab-name"
-        contenteditable="true"
-        onblur="renameAccount('${acct.id}', this.textContent.trim())"
+        contenteditable="${isOwner ? 'true' : 'false'}"
+        onblur="${isOwner ? `renameAccount('${acct.id}', this.textContent.trim())` : ''}"
         onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}"
         onclick="event.stopPropagation()"
       >${acct.name}</span>
       ${acct.viewPassword ? `<span style="font-size:10px;opacity:0.45;margin-left:2px;">🔒</span>` : ''}
-      ${accounts.length > 1 ? `<span class="acct-tab-close" onclick="event.stopPropagation();closeAccount('${acct.id}')">✕</span>` : ''}
+      ${visible.length > 1 && isOwner ? `<span class="acct-tab-close" onclick="event.stopPropagation();closeAccount('${acct.id}')">✕</span>` : ''}
     </div>
-  `).join('') + `<button class="acct-add" onclick="addAccount()" title="新增帳戶">＋</button>`;
+  `).join('') + (isOwner ? `<button class="acct-add" onclick="addAccount()" title="新增帳戶">＋</button>` : '');
 }
 
 // ════════════════════════════════════════════
@@ -1211,8 +1240,8 @@ function saveAllAccounts() {
   if (idx >= 0) accounts[idx] = { ...state, id: currentAccountId, name: accounts[idx].name };
   // currentAccountId 存本地，不上傳 Firebase
   localStorage.setItem('fundMgr_currentAcct', currentAccountId);
-  const payload = { accounts }; // 不含 currentAccountId
-  localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+  const payload = { accounts, globalSettings };
+  localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
   clearTimeout(_saveTimer);
   setSyncStatus('saving');
   _saveTimer = setTimeout(async () => {
@@ -1234,6 +1263,7 @@ function loadLocal() {
     try {
       const p = JSON.parse(d3);
       accounts = p.accounts || [];
+      if (p.globalSettings) globalSettings = { ...globalSettings, ...p.globalSettings };
       // currentAccountId 優先用本地記錄
       const localAcctId = localStorage.getItem('fundMgr_currentAcct');
       currentAccountId = (localAcctId && accounts.find(a => a.id === localAcctId))
@@ -1276,10 +1306,11 @@ async function loadFromFirebase() {
       if (remoteTime >= localTime) {
         if (remote.accounts) {
           accounts = remote.accounts;
+          if (remote.globalSettings) globalSettings = { ...globalSettings, ...remote.globalSettings };
           currentAccountId = remote.currentAccountId || accounts[0]?.id;
           state = getCurrentAccount() || accounts[0];
         }
-        localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+        localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
         refreshAllViews();
       }
     }
@@ -1290,9 +1321,10 @@ async function loadFromFirebase() {
         const remote = JSON.parse(snap.data().data);
         if (remote.accounts) {
           accounts = remote.accounts;
+          if (remote.globalSettings) globalSettings = { ...globalSettings, ...remote.globalSettings };
           currentAccountId = remote.currentAccountId || accounts[0]?.id;
           state = getCurrentAccount() || accounts[0];
-          localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId }));
+          localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
           refreshAllViews();
           setSyncStatus('ok');
         }
@@ -1301,28 +1333,16 @@ async function loadFromFirebase() {
   } catch(e) { setSyncStatus('err'); }
 }
 
-function enforceAccountPassword() {
-  const isEditing = !document.body.classList.contains('readonly');
-  if (isEditing) return;
-  const acct = getCurrentAccount();
-  if (acct && acct.viewPassword) {
-    const unlocked = sessionStorage.getItem('fundMgr_unlocked_' + acct.id);
-    if (!unlocked) {
-      const publicAcct = accounts.find(a => !a.viewPassword);
-      if (publicAcct) {
-        currentAccountId = publicAcct.id;
-        state = publicAcct;
-      }
-    }
-  }
-}
-
 function refreshAllViews() {
+  if (!loginState) return; // 未登入時不渲染內容
+  if (loginState.type === 'tab') {
+    const allowed = accounts.find(a => a.id === loginState.accountId);
+    if (allowed) { currentAccountId = allowed.id; state = allowed; }
+  }
   if (!state.investors) state.investors = [];
   if (!state.profitDists) state.profitDists = [];
   if (!state.realizedPnL) state.realizedPnL = [];
   if (!state.customColors) state.customColors = {};
-  enforceAccountPassword();
   document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
   renderAccountBar();
   const activePage = document.querySelector('.page.active');
@@ -2653,19 +2673,29 @@ function renderSettings() {
   document.getElementById('s_initNav').value = s.initNav || '';
   document.getElementById('s_startDate').value = s.startDate || '';
   document.getElementById('s_viewPassword').value = state.viewPassword || '';
+  document.getElementById('s_masterPassword').value = globalSettings.masterPassword || '';
 }
 function saveSettings() {
   state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
   state.settings.currency = document.getElementById('s_currency').value;
   state.settings.initNav = parseFloat(document.getElementById('s_initNav').value) || 0;
   state.settings.startDate = document.getElementById('s_startDate').value;
-  state.viewPassword = document.getElementById('s_viewPassword').value.trim();
   const acct = accounts.find(a => a.id === currentAccountId);
-  if (acct) { acct.name = state.settings.fundName; acct.viewPassword = state.viewPassword; }
+  if (acct) { acct.name = state.settings.fundName; }
   state.name = state.settings.fundName;
   document.getElementById('fundNameDisplay').textContent = state.settings.fundName;
   renderAccountBar();
   save(); toast('設定已儲存 ✓');
+}
+function savePasswords() {
+  const vp = document.getElementById('s_viewPassword').value.trim();
+  const mp = document.getElementById('s_masterPassword').value.trim();
+  state.viewPassword = vp;
+  const acct = accounts.find(a => a.id === currentAccountId);
+  if (acct) acct.viewPassword = vp;
+  globalSettings.masterPassword = mp;
+  renderAccountBar();
+  save(); toast('密碼設定已儲存 ✓');
 }
 
 function exportData() {
@@ -3147,36 +3177,64 @@ function toggleReadonly() {
   }
 }
 function initReadonly() {
-  // 預設唯讀，除非本地有解鎖記錄
-  const saved = localStorage.getItem('fundMgr_readonly');
-  if (saved === '0') {
-    document.body.classList.remove('readonly');
-    const btn = document.getElementById('readonlyBtn');
-    if (btn) btn.textContent = '✏️ 編輯中';
-  } else {
-    document.body.classList.add('readonly');
-    const btn = document.getElementById('readonlyBtn');
-    if (btn) btn.textContent = '🔒 唯讀';
-  }
+  document.body.classList.add('readonly');
+  const btn = document.getElementById('readonlyBtn');
+  if (btn) btn.textContent = '🔒 唯讀';
 }
 
 // ════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════
+// ════════════════════════════════════════════
+// LOGIN
+// ════════════════════════════════════════════
+function attemptLogin() {
+  const pwd = document.getElementById('loginPwd').value.trim();
+  const errEl = document.getElementById('loginError');
+  if (!pwd) return;
+
+  if (pwd === 'nini7520') {
+    loginState = { type: 'owner' };
+    document.body.classList.remove('readonly');
+    document.getElementById('readonlyBtn').textContent = '✏️ 編輯中';
+    hideLoginOverlay();
+    refreshAllViews();
+    return;
+  }
+  if (pwd === globalSettings.masterPassword) {
+    loginState = { type: 'master' };
+    hideLoginOverlay();
+    refreshAllViews();
+    return;
+  }
+  const acct = accounts.find(a => a.viewPassword === pwd);
+  if (acct) {
+    loginState = { type: 'tab', accountId: acct.id };
+    currentAccountId = acct.id;
+    state = acct;
+    hideLoginOverlay();
+    refreshAllViews();
+    return;
+  }
+  errEl.textContent = '密碼錯誤，請再試一次';
+  document.getElementById('loginPwd').value = '';
+  document.getElementById('loginPwd').focus();
+}
+
+function hideLoginOverlay() {
+  document.getElementById('loginOverlay').style.display = 'none';
+}
+
 function initApp() {
   load();
-  if (!state.investors) state.investors = [];
-  if (!state.profitDists) state.profitDists = [];
-  if (!state.realizedPnL) state.realizedPnL = [];
-  if (!state.customColors) state.customColors = {};
-  document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || state.name || '我的基金';
   document.getElementById('headerDate').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   document.getElementById('cf_date').value = new Date().toISOString().slice(0,10);
   initReadonly();
-  enforceAccountPassword();
-  renderAccountBar();
-  renderOverview();
+  // 載入 Firebase 資料但不渲染（loginState 尚未設定）
   setTimeout(() => loadFromFirebase(), 500);
+  // 顯示登入畫面
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('loginPwd').focus();
 }
 window.initApp = initApp;
 
