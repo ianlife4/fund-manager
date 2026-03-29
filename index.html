@@ -504,6 +504,10 @@ document.addEventListener('DOMContentLoaded', () => {
     appearance: none;
   }
   body.readonly .acct-tab-close { display: none !important; }
+  body.visitor-mode .account-bar { display: none !important; }
+  body.visitor-mode .tabs .tab:not(.visitor-tab) { display: none !important; }
+  body.visitor-mode #readonlyBtn { display: none !important; }
+  body.visitor-mode #syncStatus { display: none !important; }
   body.readonly .acct-add { display: none !important; }
   body.readonly #readonlyBtn {
     background: rgba(91,156,246,0.15);
@@ -556,7 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
   <button class="tab active" onclick="showPage('overview')">📊 總覽</button>
   <button class="tab" onclick="showPage('portfolio')">📋 持倉管理</button>
   <button class="tab" onclick="showPage('cashflow')">💰 出入金</button>
-  <button class="tab" onclick="showPage('performance')">📈 績效曲線</button>
+  <button class="tab visitor-tab" onclick="showPage('performance')">📈 績效曲線</button>
   <button class="tab" onclick="showPage('allocation')">🥧 配置分析</button>
   <button class="tab" onclick="showPage('profit')">👥 獲利分配</button>
   <button class="tab" onclick="showPage('settings')">⚙ 設定</button>
@@ -1078,6 +1082,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <label class="form-label">萬用密碼（輸入此密碼可查看全部頁籤）</label>
             <input class="form-input" id="s_masterPassword" type="text" placeholder="留空 = 不設萬用密碼" />
           </div>
+          <div class="form-group">
+            <label class="form-label">訪客密碼（輸入此密碼只能看到績效曲線）</label>
+            <input class="form-input" id="s_visitorPassword" type="text" placeholder="留空 = 不設訪客密碼" />
+          </div>
         </div>
         <div style="margin-top:16px;">
           <button class="btn btn-gold" onclick="savePasswords()">儲存密碼設定</button>
@@ -1118,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // accounts = [ { id, name, ...stateFields }, ... ]
 let accounts = [];
 let currentAccountId = null;
-let globalSettings = { masterPassword: '0820' };
+let globalSettings = { masterPassword: '0820', visitorPassword: '888', visitorAccountId: '' };
 let loginState = null; // null=未登入 | { type:'owner'|'master'|'tab', accountId }
 
 function emptyAccount(name = '帳戶') {
@@ -1425,6 +1433,7 @@ function getLabelColor(label) {
 // TABS / PAGES
 // ════════════════════════════════════════════
 function showPage(name) {
+  if (loginState?.type === 'visitor' && name !== 'performance') return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
@@ -2674,6 +2683,7 @@ function renderSettings() {
   document.getElementById('s_startDate').value = s.startDate || '';
   document.getElementById('s_viewPassword').value = state.viewPassword || '';
   document.getElementById('s_masterPassword').value = globalSettings.masterPassword || '';
+  document.getElementById('s_visitorPassword').value = globalSettings.visitorPassword || '';
 }
 function saveSettings() {
   state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
@@ -2694,6 +2704,7 @@ function savePasswords() {
   const acct = accounts.find(a => a.id === currentAccountId);
   if (acct) acct.viewPassword = vp;
   globalSettings.masterPassword = mp;
+  globalSettings.visitorPassword = document.getElementById('s_visitorPassword').value.trim();
   renderAccountBar();
   save(); toast('密碼設定已儲存 ✓');
 }
@@ -3205,6 +3216,21 @@ function attemptLogin() {
     loginState = { type: 'master' };
     hideLoginOverlay();
     refreshAllViews();
+    return;
+  }
+  if (globalSettings.visitorPassword && pwd === globalSettings.visitorPassword) {
+    const visAcct = (globalSettings.visitorAccountId && accounts.find(a => a.id === globalSettings.visitorAccountId))
+      || accounts[0];
+    loginState = { type: 'visitor', accountId: visAcct?.id };
+    if (visAcct) { currentAccountId = visAcct.id; state = visAcct; }
+    document.body.classList.add('visitor-mode');
+    hideLoginOverlay();
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('page-performance')?.classList.add('active');
+    document.querySelector('.tab.visitor-tab')?.classList.add('active');
+    renderPage('performance');
+    renderAccountBar();
     return;
   }
   const acct = accounts.find(a => a.viewPassword === pwd);
