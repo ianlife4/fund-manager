@@ -2,12 +2,12 @@
   "name": "Ianker 績效紀錄",
   "short_name": "Ianker",
   "description": "即時查看基金持倉、績效與獲利分配",
-  "start_url": "/",
+  "start_url": "/fund-manager/",
   "display": "standalone",
   "background_color": "#0a0c10",
   "theme_color": "#0a0c10",
   "orientation": "portrait",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/fund-manager/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }
