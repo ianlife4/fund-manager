@@ -353,6 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
   .chart-container { position: relative; height: 300px; }
 
   /* ── PIE CHART ── */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   .pie-wrap {
     display: grid;
     grid-template-columns: 260px 1fr;
@@ -490,6 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     .card-value { font-size: 16px; }
     .card-label { font-size: 10px; }
     .section-body { padding: 12px; }
+    .charts-grid { grid-template-columns: 1fr; }
     .pie-wrap { grid-template-columns: 1fr; }
     .pie-container { height: 220px; }
     table { font-size: 12px; }
@@ -896,7 +898,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+    <div class="charts-grid">
       <div class="section">
         <div class="section-header">
           <span class="section-title">個股佔比</span>
