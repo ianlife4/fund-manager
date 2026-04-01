@@ -1393,7 +1393,15 @@ function totalCost() {
     return s + (isMargin ? Math.round(totalAmt * selfPayRate) : totalAmt);
   }, 0);
 }
-function totalPnL() { return totalMarketValue() - totalCost(); }
+function totalFullCost() {
+  // 融資用全額成本（shares*cost），現股用付出成本
+  return state.holdings.reduce((s, h) => {
+    if (h.manualCost != null) return s + h.manualCost;
+    const totalAmt = h.shares * h.cost;
+    return s + totalAmt;
+  }, 0);
+}
+function totalPnL() { return totalMarketValue() - totalFullCost(); }
 function profitRate() {
   const c = totalCost();
   return c === 0 ? 0 : (totalPnL() / c) * 100;
@@ -1768,8 +1776,10 @@ function renderPortfolio() {
       // 預估收入：有 manualEst 就用（手動改後固定），否則 = 目前市值
       const displayIncome = h.manualEst != null ? h.manualEst : displayMarket;
 
-      // 損益 = 預估收入 − 付出成本；報酬率 = 損益 ÷ 付出成本
-      const pnlDisplay = displayIncome - displayCost;
+      // 損益 = 預估收入 − 全額成本（融資用全額成本計算，非自備款）
+      // 報酬率 = 損益 ÷ 付出成本（自備款）
+      const pnlBase = h.manualCost != null ? displayCost : (isMargin ? totalAmt : displayCost);
+      const pnlDisplay = displayIncome - pnlBase;
       const prDisplay  = displayCost === 0 ? 0 : (pnlDisplay / displayCost) * 100;
       const weight     = totalWithCash === 0 ? 0 : (displayMarket / totalWithCash) * 100;
 
@@ -1897,7 +1907,11 @@ function renderPortfolio() {
   const totalDisplayMarket = state.holdings.reduce((s, h) => {
     return s + (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
   }, 0);
-  const totalPnL = totalDisplayEst - totalDisplayCost;
+  const totalFullCostDisplay = state.holdings.reduce((s, h) => {
+    if (h.manualCost != null) return s + h.manualCost;
+    return s + h.shares * h.cost;
+  }, 0);
+  const totalPnL = totalDisplayEst - totalFullCostDisplay;
   const totalPR = totalDisplayCost === 0 ? 0 : (totalPnL / totalDisplayCost) * 100;
 
   const totalRow = state.holdings.length > 0 ? `<tr style="border-top:2px solid var(--gold-dim);background:rgba(201,168,76,0.04)">
