@@ -1444,7 +1444,7 @@ function getColorByIndex(i) {
 function getLabelColor(label) {
   const custom = state.customColors || {};
   if (custom[label]) return custom[label];
-  if (label === '現金') return '#5b9cf6';
+  if (label === '現金') return '#f26e6e';
   // 查找 label 在 holdings 或 sector 中的 index
   const allLabels = [
     ...(state.holdings||[]).map(h => h.name || h.ticker),
