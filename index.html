@@ -1427,7 +1427,13 @@ async function loadFromFirebase() {
         if (remote.accounts) {
           accounts = remote.accounts;
           if (remote.globalSettings) globalSettings = { ...globalSettings, ...remote.globalSettings };
-          currentAccountId = remote.currentAccountId || accounts[0]?.id;
+          // 優先用本地記錄的帳戶，不被遠端覆蓋
+          const localAcctId = localStorage.getItem('fundMgr_currentAcct');
+          if (localAcctId && accounts.find(a => a.id === localAcctId)) {
+            currentAccountId = localAcctId;
+          } else {
+            currentAccountId = accounts[0]?.id;
+          }
           state = getCurrentAccount() || accounts[0];
         }
         localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
@@ -1442,7 +1448,10 @@ async function loadFromFirebase() {
         if (remote.accounts) {
           accounts = remote.accounts;
           if (remote.globalSettings) globalSettings = { ...globalSettings, ...remote.globalSettings };
-          currentAccountId = remote.currentAccountId || accounts[0]?.id;
+          // 保持當前帳戶不跳走，currentAccountId 不從遠端覆蓋
+          if (!accounts.find(a => a.id === currentAccountId)) {
+            currentAccountId = accounts[0]?.id;
+          }
           state = getCurrentAccount() || accounts[0];
           localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
           refreshAllViews();
