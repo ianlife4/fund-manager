@@ -1215,6 +1215,31 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
 
+    <div class="section readonly-hide">
+      <div class="section-header"><span class="section-title">📊 匯入歷史週績效</span></div>
+      <div class="section-body">
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">
+          從 Excel 複製週績效表格貼到下方。格式：每行一週，欄位用 Tab 分隔。<br>
+          <strong style="color:var(--text);">必要欄位：日期、銀行現金、證券市值、總淨值</strong>，可選：本週入/出金、備註<br>
+          範例：<code style="color:var(--gold)">1月18日 &lt;tab&gt; 56505 &lt;tab&gt; 3018893 &lt;tab&gt; 3075398 &lt;tab&gt; 0 &lt;tab&gt; 備註</code>
+        </p>
+        <textarea id="historyPaste" rows="8" placeholder="從 Excel 複製週績效表格後貼在這裡...&#10;&#10;格式（Tab分隔）：&#10;日期  銀行現金  證券市值  總淨值  入出金(可選)  備註(可選)&#10;&#10;範例：&#10;1月18日  56505  3018893  3075398  0  聯友金屬減碼&#10;3月15日  6041816  5531816  5531816  -510000  律師費"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:10px;resize:vertical;"></textarea>
+        <div style="margin-top:6px;">
+          <label style="font-size:12px;color:var(--text-dim);">資料年份：</label>
+          <select id="historyYear" style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 8px;font-size:12px;">
+            <option value="2026">2026</option>
+            <option value="2025">2025</option>
+            <option value="2024">2024</option>
+          </select>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-gold" onclick="importHistory()">匯入歷史資料</button>
+          <span id="historyResult" style="font-size:12px;color:var(--text-dim);"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-header"><span class="section-title">使用說明</span></div>
       <div class="section-body" style="line-height:2;color:var(--text-dim);font-size:13px;">
@@ -3205,6 +3230,133 @@ function handleImport(e) {
   };
   r.readAsText(f);
 }
+/* ── 匯入歷史週績效 ── */
+function importHistory() {
+  const raw = document.getElementById('historyPaste').value.trim();
+  const resultEl = document.getElementById('historyResult');
+  const year = document.getElementById('historyYear').value;
+  if (!raw) { resultEl.textContent = '⚠️ 請先貼上資料'; resultEl.style.color = '#f26e6e'; return; }
+
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  let snapAdded = 0, cfAdded = 0, skipped = 0;
+
+  for (const line of lines) {
+    // 跳過表頭
+    if (/日期|Date|銀行|證券|總淨值/i.test(line) && !/\d{1,2}月/.test(line)) { skipped++; continue; }
+    if (/小\s*計|合\s*計|總\s*計|^[\s]*$/.test(line)) { skipped++; continue; }
+
+    // Tab 或 多空格 分隔
+    let cols = line.split(/\t/);
+    if (cols.length < 3) cols = line.split(/\s{2,}/);
+    if (cols.length < 3) { skipped++; continue; }
+
+    // 解析日期：支援 "1月18日"、"1/18"、"2026-01-18"、"01-18" 等
+    const dateStr = cols[0].trim();
+    const isoDate = parseFlexDate(dateStr, year);
+    if (!isoDate) { skipped++; continue; }
+
+    // 解析數字欄位（移除 $, 逗號, 空格）
+    const nums = cols.slice(1).map(c => {
+      const cleaned = c.trim().replace(/[$,\s%]/g, '');
+      return cleaned === '' ? null : parseFloat(cleaned);
+    });
+
+    // 至少要有3個數字：現金、市值、淨值
+    const validNums = nums.filter(n => n !== null && !isNaN(n));
+    if (validNums.length < 2) { skipped++; continue; }
+
+    // 判斷欄位：可能的格式
+    // 格式A（完整）：現金[0] 市值[1] 淨值[2] 入出金[3] 週損益[4] 累計損益[5] 報酬率[6]
+    // 格式B（簡單）：市值[0] 淨值[1]
+    let cashBal = 0, totalMarket = 0, nav = 0, inout = 0;
+    let note = '';
+
+    if (nums.length >= 3 && nums[0] !== null && nums[1] !== null && nums[2] !== null) {
+      // 格式A：現金 | 市值 | 淨值 | ...
+      cashBal = nums[0] || 0;
+      totalMarket = nums[1] || 0;
+      nav = nums[2] || 0;
+      if (nums.length >= 4 && nums[3] !== null) inout = nums[3];
+    } else if (nums.length >= 2 && nums[0] !== null && nums[1] !== null) {
+      // 格式B：市值 | 淨值
+      totalMarket = nums[0] || 0;
+      nav = nums[1] || 0;
+    } else { skipped++; continue; }
+
+    // 備註：找最後一個非數字欄位
+    for (let i = cols.length - 1; i >= 1; i--) {
+      const t = cols[i].trim();
+      if (t && isNaN(t.replace(/[$,\s%\-]/g, '')) && !/^\d/.test(t)) {
+        note = t; break;
+      }
+    }
+
+    // 加入快照（避免重複日期）
+    if (nav > 0) {
+      const existSnap = state.snapshots.find(s => s.date === isoDate);
+      if (!existSnap) {
+        state.snapshots.push({
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+          date: isoDate,
+          nav: nav,
+          totalCost: 0,
+          totalMarket: totalMarket,
+          cashBal: cashBal,
+          note: note || undefined,
+        });
+        snapAdded++;
+      } else { skipped++; }
+    }
+
+    // 入出金不為0 → 加入 cashflow
+    if (inout !== 0 && inout !== null && !isNaN(inout)) {
+      const existCf = state.cashflows.find(c => c.date === isoDate && Math.abs(c.amount - Math.abs(inout)) < 1);
+      if (!existCf) {
+        state.cashflows.push({
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 6) + 'cf',
+          date: isoDate,
+          type: inout > 0 ? '入金' : '出金',
+          amount: Math.abs(inout),
+          note: note || (inout > 0 ? '追加資金' : '提領資金'),
+          person: '',
+        });
+        cfAdded++;
+      }
+    }
+  }
+
+  if (snapAdded + cfAdded === 0) {
+    resultEl.textContent = '⚠️ 無法解析，請確認格式';
+    resultEl.style.color = '#f26e6e';
+    return;
+  }
+
+  // 排序快照
+  state.snapshots.sort((a, b) => a.date.localeCompare(b.date));
+  state.cashflows.sort((a, b) => a.date.localeCompare(b.date));
+
+  save();
+  resultEl.style.color = '#4ecdc4';
+  resultEl.textContent = `✅ 匯入完成！快照 ${snapAdded} 筆，出入金 ${cfAdded} 筆` + (skipped ? `，跳過 ${skipped} 行` : '');
+  document.getElementById('historyPaste').value = '';
+  toast(`歷史資料匯入：快照${snapAdded} 出入金${cfAdded}`);
+  renderPerformance();
+}
+
+/* 彈性日期解析：支援 "1月18日"、"1/18"、"01-18"、"2026-01-18" */
+function parseFlexDate(str, defaultYear) {
+  // 1月18日 / 1月18
+  let m = str.match(/(\d{1,2})月(\d{1,2})日?/);
+  if (m) return `${defaultYear}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  // 2026-01-18 / 2026/01/18
+  m = str.match(/(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  // 01-18 / 1/18
+  m = str.match(/^(\d{1,2})[\-\/](\d{1,2})$/);
+  if (m) return `${defaultYear}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  return null;
+}
+
 function clearAllData() {
   if (!confirm('確定要清除所有資料？此操作無法復原。')) return;
   const fresh = emptyAccount('帳戶 A');
