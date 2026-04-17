@@ -1994,11 +1994,14 @@ function renderPortfolio() {
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
         <td><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></td>
-        <td><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" /></td>
+        <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>` : `<input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />`}</td>
         <td>${costCell}</td>
         <td>${incomeCell}</td>
         <td>${marketCell}</td>
-        <td class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</td>
+        <td>${isCB
+          ? `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--down)':'var(--up)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`
+          : `<span class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</span>`
+        }</td>
         <td class="${signClass(prDisplay)}">${fmtPct(prDisplay)}</td>
         <td style="color:var(--text-dim);font-size:12px">${feeCell}</td>
         <td style="font-size:12px;${maintainStyle}">${maintainCell}</td>
@@ -2450,8 +2453,16 @@ function updatePrice(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
   h.price = parseFloat(val) || 0;
-  h.manualMarket = null; // 改現價時重設市值為自動（shares × price）
-  // manualEst 不動：手動改過的預估收入保持固定（方案B）
+  h.manualMarket = null;
+  save(); renderPortfolio();
+}
+function updateCbPnl(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  // CB: price 存未實現損益，直接更新
+  h.price = parseFloat(val) || 0;
+  h.manualMarket = null;
+  h.manualEst = null;
   save(); renderPortfolio();
 }
 function updateName(id, val) {
