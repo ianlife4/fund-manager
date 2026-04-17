@@ -1935,7 +1935,8 @@ function renderPortfolio() {
         <td><select style="${selStyle}" onchange="updateTradeType('${h.id}',this.value)">
           ${['現股','融資','零股','ETF','期貨','其他'].map(t=>`<option value="${t}"${h.tradeType===t?' selected':''}>${t}</option>`).join('')}
         </select></td>
-        <td><div class="td-name">${h.name}</div><div class="td-ticker">${h.ticker}</div></td>
+        <td><div><input type="text" value="${h.name}" style="${inpFull};font-weight:700;font-size:13px;" ${onEnter} onchange="updateName('${h.id}',this.value)" onblur="updateName('${h.id}',this.value)" /></div>
+            <div><input type="text" value="${h.ticker}" style="${inpFull};font-size:11px;color:var(--text-dim);" ${onEnter} onchange="updateTicker('${h.id}',this.value)" onblur="updateTicker('${h.id}',this.value)" /></div></td>
         <td><select style="${selStyle}" onchange="updateSector('${h.id}',this.value)">
           ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
         </select></td>
@@ -2395,6 +2396,18 @@ function updatePrice(id, val) {
   h.price = parseFloat(val) || 0;
   h.manualMarket = null; // 改現價時重設市值為自動（shares × price）
   // manualEst 不動：手動改過的預估收入保持固定（方案B）
+  save(); renderPortfolio();
+}
+function updateName(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.name = val.trim() || h.ticker;
+  save(); renderPortfolio();
+}
+function updateTicker(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.ticker = val.trim();
   save(); renderPortfolio();
 }
 function updateShares(id, val) {
