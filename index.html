@@ -1512,8 +1512,8 @@ function refreshAllViews() {
 // ════════════════════════════════════════════
 function totalMarketValue() {
   return state.holdings.reduce((s, h) => {
-    // 可轉債：price 欄位直接存總市值
-    if (h.tradeType === '可轉債') return s + (h.price || 0);
+    // 可轉債：price 存未實現損益，市值 = 成本 + 未實現
+    if (h.tradeType === '可轉債') return s + (h.cost || 0) + (h.price || 0);
     return s + h.shares * h.price;
   }, 0);
 }
@@ -1800,10 +1800,10 @@ function onTradeTypeChange() {
   const isCB = t === '可轉債';
   document.getElementById('lbl_shares').textContent = isCB ? '庫存單位（張）' : '庫存數量（股/口）';
   document.getElementById('lbl_cost').textContent   = isCB ? '持有總成本（元）' : '成交價格（元/股）';
-  document.getElementById('lbl_price').textContent  = isCB ? '目前總市值（元）' : '現價（元/股）';
+  document.getElementById('lbl_price').textContent  = isCB ? '未實現損益（元）' : '現價（元/股）';
   document.getElementById('p_shares').placeholder    = isCB ? '24' : '1000';
   document.getElementById('p_cost').placeholder      = isCB ? '581710' : '500';
-  document.getElementById('p_price').placeholder     = isCB ? '1118880' : '600';
+  document.getElementById('p_price').placeholder     = isCB ? '537170' : '600';
   updateFeePreview();
 }
 
@@ -1903,7 +1903,7 @@ function renderPortfolio() {
     rows = state.holdings.map(h => {
       const isCB       = h.tradeType === '可轉債';
       const totalAmt   = isCB ? h.cost : h.shares * h.cost;
-      const autoMarket = isCB ? h.price : h.shares * h.price;
+      const autoMarket = isCB ? (h.cost || 0) + (h.price || 0) : h.shares * h.price;
       const isMargin   = h.tradeType === '融資';
       const mRate      = h.marginRate || 0.6;
       const selfPayRate = 1 - mRate;
@@ -2048,12 +2048,12 @@ function renderPortfolio() {
     return s + c;
   }, 0);
   const totalDisplayEst = state.holdings.reduce((s, h) => {
-    if (h.tradeType === '可轉債') return s + (h.manualEst != null ? h.manualEst : (h.price || 0));
+    if (h.tradeType === '可轉債') return s + (h.manualEst != null ? h.manualEst : (h.cost||0) + (h.price||0));
     const est = h.manualEst != null ? h.manualEst : h.shares * h.price;
     return s + est;
   }, 0);
   const totalDisplayMarket = state.holdings.reduce((s, h) => {
-    if (h.tradeType === '可轉債') return s + (h.manualMarket != null ? h.manualMarket : (h.price || 0));
+    if (h.tradeType === '可轉債') return s + (h.manualMarket != null ? h.manualMarket : (h.cost||0) + (h.price||0));
     return s + (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
   }, 0);
   const totalFullCostDisplay = state.holdings.reduce((s, h) => {
