@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb3</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb4</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -3036,7 +3036,8 @@ function renderAllocation() {
     return;
   }
 
-  const CASH_COLOR = (state.customColors||{})['現金'] || '#5b9cf6';
+  // CASH_COLOR 與 getLabelColor('現金') 保持一致（預設 salmon #f26e6e）
+  const CASH_COLOR = getLabelColor('現金');
 
   // ── sorted holdings and cashVal needed early
   const sorted = [...holdings].sort((a,b) => (b.shares*b.price)-(a.shares*a.price));
