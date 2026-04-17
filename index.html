@@ -1999,7 +1999,7 @@ function renderPortfolio() {
         <td>${incomeCell}</td>
         <td>${marketCell}</td>
         <td>${isCB
-          ? `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--down)':'var(--up)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`
+          ? `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`
           : `<span class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</span>`
         }</td>
         <td class="${signClass(prDisplay)}">${fmtPct(prDisplay)}</td>
