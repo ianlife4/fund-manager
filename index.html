@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb2</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb3</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -2699,6 +2699,9 @@ function renderPerformance() {
   // 合併快照（快照有完整NAV含市值）
   const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
 
+  // 獲利分配日期（w1...wN）：每一期結算日都應該是圖表資料點
+  const dists = [...(state.profitDists||[])].sort((a,b)=>a.date.localeCompare(b.date));
+
   // 建立最終chartData：優先用快照，其餘用出入金累計現金估算
   let chartData = [];
   if (snaps.length > 0) {
@@ -2735,6 +2738,17 @@ function renderPerformance() {
       chartData.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav(), type: 'now' });
     }
   }
+
+  // ── 把獲利分配日期補進 chartData（若尚未存在）
+  // 每一期 NAV 估算：協議池 + 截至該期的累計本期獲利
+  let cumProfit = 0;
+  dists.forEach(d => {
+    cumProfit += (d.totalProfit || 0);
+    if (!chartData.find(cd => cd.date === d.date)) {
+      const estNav = (d.contractPool || 0) + cumProfit;
+      chartData.push({ date: d.date, nav: estNav, type: 'dist' });
+    }
+  });
 
   chartData.sort((a,b) => a.date.localeCompare(b.date));
 
