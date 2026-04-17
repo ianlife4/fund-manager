@@ -2534,15 +2534,14 @@ function toggleLock(id, field) {
     h.costLocked = !h.costLocked;
     // 鎖定時：若沒有手動值先存一個（目前的自動值）
     if (h.costLocked && h.manualCost == null) {
-      h.manualCost = h.shares * h.cost;
+      h.manualCost = h.tradeType === '可轉債' ? h.cost : h.shares * h.cost;
     }
-    // 解鎖時：清掉手動值，回到自動值
     if (!h.costLocked) h.manualCost = null;
     toast(h.costLocked ? '付出成本已鎖定 🔒' : '付出成本已解鎖 🔓');
   } else if (field === 'market') {
     h.marketLocked = !h.marketLocked;
     if (h.marketLocked && h.manualMarket == null) {
-      h.manualMarket = h.shares * h.price;
+      h.manualMarket = h.tradeType === '可轉債' ? (h.cost||0)+(h.price||0) : h.shares * h.price;
     }
     if (!h.marketLocked) h.manualMarket = null;
     toast(h.marketLocked ? '目前市值已鎖定 🔒' : '目前市值已解鎖 🔓');
@@ -2745,6 +2744,7 @@ function renderPerformance() {
 
   // ── 未實現損益（持倉明細加總：預估收入 − 付出成本）
   const unrealizedPnL = state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.price || 0); // CB: price 就是未實現損益
     const totalAmt = h.shares * h.cost;
     const displayCostH = h.manualCost != null ? h.manualCost
       : (h.tradeType==='融資' ? Math.round(totalAmt*(1-(h.marginRate||0.6))) : totalAmt);
@@ -3052,7 +3052,8 @@ function renderAllocation() {
   holdings.forEach(h => {
     const key = h.ticker || h.name;
     const label = h.name || h.ticker;
-    const mv = h.marketLocked && h.manualMarket != null ? h.manualMarket : h.shares * h.price;
+    const mv = h.marketLocked && h.manualMarket != null ? h.manualMarket
+      : (h.tradeType === '可轉債' ? (h.cost||0) + (h.price||0) : h.shares * h.price);
     if (!tickerMap[key]) tickerMap[key] = { label, value: 0 };
     tickerMap[key].value += mv;
   });
@@ -3091,7 +3092,8 @@ function renderAllocation() {
   const sectorMap = {};
   holdings.forEach(h => {
     const s = h.sector || '其他';
-    sectorMap[s] = (sectorMap[s] || 0) + h.shares * h.price;
+    const mv = h.tradeType === '可轉債' ? (h.cost||0) + (h.price||0) : h.shares * h.price;
+    sectorMap[s] = (sectorMap[s] || 0) + mv;
   });
   if (cashVal > 0) sectorMap['現金'] = (sectorMap['現金'] || 0) + cashVal;
   const sectors = Object.entries(sectorMap).sort((a,b) => b[1]-a[1]);
@@ -3125,6 +3127,7 @@ function renderAllocation() {
     const tradeTypes = subs.map(h => h.tradeType || '現股').join(' + ');
     // 付出成本：同代號所有部位加總，有手動值用手動值
     const totalPaidCost = subs.reduce((s, h) => {
+      if (h.tradeType === '可轉債') return s + (h.cost || 0);
       if (h.manualCost != null) return s + h.manualCost;
       const totalAmt = h.shares * h.cost;
       const isMarginH = h.tradeType === '融資';
@@ -3158,6 +3161,7 @@ function renderAllocation() {
 
   // 付出成本合計（有手動值用手動值，否則用自動計算值）
   const totalCostAll = holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.cost || 0);
     if (h.manualCost != null) return s + h.manualCost;
     const totalAmt = h.shares * h.cost;
     const isMarginH = h.tradeType === '融資';
