@@ -679,6 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <select class="form-input" id="p_tradeType" onchange="onTradeTypeChange()">
             <option value="現股">現股</option>
             <option value="融資">融資</option>
+            <option value="可轉債">可轉債(CB)</option>
             <option value="零股">零股</option>
             <option value="ETF">ETF</option>
             <option value="期貨">期貨</option>
@@ -694,15 +695,15 @@ document.addEventListener('DOMContentLoaded', () => {
           <input class="form-input" id="p_name" placeholder="台積電" />
         </div>
         <div class="form-group">
-          <label class="form-label">庫存數量（股/口）</label>
+          <label class="form-label" id="lbl_shares">庫存數量（股/口）</label>
           <input class="form-input" id="p_shares" type="number" placeholder="1000" oninput="updateFeePreview()" />
         </div>
         <div class="form-group">
-          <label class="form-label">成交價格（元/股）</label>
+          <label class="form-label" id="lbl_cost">成交價格（元/股）</label>
           <input class="form-input" id="p_cost" type="number" placeholder="500" oninput="updateFeePreview()" />
         </div>
         <div class="form-group">
-          <label class="form-label">現價（元/股）</label>
+          <label class="form-label" id="lbl_price">現價（元/股）</label>
           <input class="form-input" id="p_price" type="number" placeholder="600" oninput="updateFeePreview()" />
         </div>
         <div class="form-group">
@@ -1507,12 +1508,16 @@ function refreshAllViews() {
 // COMPUTED
 // ════════════════════════════════════════════
 function totalMarketValue() {
-  // 永遠用 shares × price 自動計算，manualMarket 只影響表格顯示
-  return state.holdings.reduce((s, h) => s + h.shares * h.price, 0);
+  return state.holdings.reduce((s, h) => {
+    // 可轉債：price 欄位直接存總市值
+    if (h.tradeType === '可轉債') return s + (h.price || 0);
+    return s + h.shares * h.price;
+  }, 0);
 }
 function totalCost() {
-  // 用手動輸入值（若有），否則用自動計算（融資=自備款，現股=全額）
   return state.holdings.reduce((s, h) => {
+    // 可轉債：cost 欄位直接存總成本
+    if (h.tradeType === '可轉債') return s + (h.cost || 0);
     if (h.manualCost != null) return s + h.manualCost;
     const totalAmt = h.shares * h.cost;
     const isMargin = h.tradeType === '融資';
@@ -1521,8 +1526,8 @@ function totalCost() {
   }, 0);
 }
 function totalFullCost() {
-  // 融資一律用全額成本（shares*cost），現股用付出成本
   return state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.cost || 0);
     if (h.tradeType === '融資') return s + h.shares * h.cost;
     if (h.manualCost != null) return s + h.manualCost;
     return s + h.shares * h.cost;
@@ -1788,6 +1793,14 @@ function calcFuturesTax(contractValue) {
 function onTradeTypeChange() {
   const t = document.getElementById('p_tradeType').value;
   document.getElementById('p_futuresMgrGroup').style.display = t === '期貨' ? '' : 'none';
+  // 可轉債：標籤改為總額
+  const isCB = t === '可轉債';
+  document.getElementById('lbl_shares').textContent = isCB ? '庫存單位（張）' : '庫存數量（股/口）';
+  document.getElementById('lbl_cost').textContent   = isCB ? '持有總成本（元）' : '成交價格（元/股）';
+  document.getElementById('lbl_price').textContent  = isCB ? '目前總市值（元）' : '現價（元/股）';
+  document.getElementById('p_shares').placeholder    = isCB ? '24' : '1000';
+  document.getElementById('p_cost').placeholder      = isCB ? '581710' : '500';
+  document.getElementById('p_price').placeholder     = isCB ? '1118880' : '600';
   updateFeePreview();
 }
 
@@ -1885,32 +1898,32 @@ function renderPortfolio() {
     rows = `<tr><td colspan="14"><div class="empty"><div class="empty-icon">📋</div>尚無持倉，請新增</div></td></tr>`;
   } else {
     rows = state.holdings.map(h => {
-      const totalAmt   = h.shares * h.cost;
-      const autoMarket = h.shares * h.price;
+      const isCB       = h.tradeType === '可轉債';
+      const totalAmt   = isCB ? h.cost : h.shares * h.cost;
+      const autoMarket = isCB ? h.price : h.shares * h.price;
       const isMargin   = h.tradeType === '融資';
       const mRate      = h.marginRate || 0.6;
       const selfPayRate = 1 - mRate;
 
-      // 付出成本顯示：有 manualCost 就用，否則自動算（融資=自備款，現股=全額）
-      const autoCost = isMargin
-        ? Math.round(totalAmt * selfPayRate)
+      // 付出成本顯示：可轉債直接用 cost（總成本），融資=自備款，其他=全額
+      const autoCost = isCB ? h.cost
+        : isMargin ? Math.round(totalAmt * selfPayRate)
         : totalAmt;
       const displayCost = h.manualCost != null ? h.manualCost : autoCost;
 
-      // 目前市值：有 manualMarket 就用，否則自動
+      // 目前市值：可轉債直接用 price（總市值）
       const displayMarket = h.manualMarket != null ? h.manualMarket : autoMarket;
 
       // 預估收入：有 manualEst 就用（手動改後固定），否則 = 目前市值
       const displayIncome = h.manualEst != null ? h.manualEst : displayMarket;
 
-      // 損益 = 預估收入 − 全額成本（融資一律用 shares×cost）
-      // 報酬率 = 損益 ÷ 付出成本（自備款）
+      // 損益 & 報酬率
       const pnlBase = isMargin ? totalAmt : displayCost;
       const pnlDisplay = displayIncome - pnlBase;
       const prDisplay  = displayCost === 0 ? 0 : (pnlDisplay / displayCost) * 100;
       const weight     = totalWithCash === 0 ? 0 : (displayMarket / totalWithCash) * 100;
 
-      const tradeTypeBadge = isMargin ? 'badge-red' : h.tradeType === '期貨' ? 'badge-gold' : h.tradeType === '零股' ? 'badge-blue' : 'badge-green';
+      const tradeTypeBadge = isCB ? 'badge-gold' : isMargin ? 'badge-red' : h.tradeType === '期貨' ? 'badge-gold' : h.tradeType === '零股' ? 'badge-blue' : 'badge-green';
 
       // 手續費 & 維持率
       const disc = h.feeDiscount || 6;
@@ -1919,7 +1932,9 @@ function renderPortfolio() {
       const isFutures = h.tradeType === '期貨';
       let feeCell = '—', maintainCell = '—', maintainStyle = '';
 
-      if (isFutures) {
+      if (isCB) {
+        feeCell = '—'; // CB 手續費另計
+      } else if (isFutures) {
         const lots = Math.round(h.shares / 2000) || 1;
         feeCell = fmtMoney((h.futuresFee||60)*2 + calcFuturesTax(calcFuturesContractValue(h.cost,lots))*2);
       } else if (isZero) {
@@ -1967,12 +1982,12 @@ function renderPortfolio() {
 
       return `<tr>
         <td><select style="${selStyle}" onchange="updateTradeType('${h.id}',this.value)">
-          ${['現股','融資','零股','ETF','期貨','其他'].map(t=>`<option value="${t}"${h.tradeType===t?' selected':''}>${t}</option>`).join('')}
+          ${['現股','融資','可轉債','零股','ETF','期貨','其他'].map(t=>`<option value="${t}"${h.tradeType===t?' selected':''}>${t}</option>`).join('')}
         </select></td>
         <td><div><input type="text" value="${h.name}" style="${inpFull};font-weight:700;font-size:13px;" ${onEnter} onchange="updateName('${h.id}',this.value)" onblur="updateName('${h.id}',this.value)" /></div>
             <div><input type="text" value="${h.ticker}" style="${inpFull};font-size:11px;color:var(--text-dim);" ${onEnter} onchange="updateTicker('${h.id}',this.value)" onblur="updateTicker('${h.id}',this.value)" /></div></td>
         <td><select style="${selStyle}" onchange="updateSector('${h.id}',this.value)">
-          ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
+          ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','可轉債','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
         <td><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></td>
@@ -2023,19 +2038,23 @@ function renderPortfolio() {
 
   // 合計列
   const totalDisplayCost = state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.cost || 0);
     const amt = h.shares * h.cost;
     const c = h.manualCost != null ? h.manualCost
       : (h.tradeType==='融資' ? Math.round(amt*(1-(h.marginRate||0.6))) : amt);
     return s + c;
   }, 0);
   const totalDisplayEst = state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.manualEst != null ? h.manualEst : (h.price || 0));
     const est = h.manualEst != null ? h.manualEst : h.shares * h.price;
     return s + est;
   }, 0);
   const totalDisplayMarket = state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.manualMarket != null ? h.manualMarket : (h.price || 0));
     return s + (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
   }, 0);
   const totalFullCostDisplay = state.holdings.reduce((s, h) => {
+    if (h.tradeType === '可轉債') return s + (h.cost || 0);
     const isM = h.tradeType === '融資';
     if (isM) return s + h.shares * h.cost;
     if (h.manualCost != null) return s + h.manualCost;
