@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb5</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb6</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -998,8 +998,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <div class="charts-grid">
       <div class="section">
-        <div class="section-header">
+        <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;">
           <span class="section-title">個股佔比</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;">
+            <input type="checkbox" id="showCashPie" checked onchange="togglePieCash(this.checked)"
+              style="accent-color:var(--gold);cursor:pointer;" />
+            顯示現金
+          </label>
         </div>
         <div class="section-body">
           <div class="pie-wrap">
@@ -3016,6 +3021,12 @@ function resetColors() {
   save(); renderAllocation(); toast('已重置為預設顏色');
 }
 
+function togglePieCash(checked) {
+  localStorage.setItem('pieShowCash', checked ? 'true' : 'false');
+  renderAllocation();
+  toast(checked ? '圓餅圖已顯示現金' : '圓餅圖已隱藏現金');
+}
+
 // Fix COLORS reference for investor cards (use index-based)
 const COLORS = DEFAULT_COLORS;
 
@@ -3039,9 +3050,15 @@ function renderAllocation() {
   // CASH_COLOR 與 getLabelColor('現金') 保持一致（預設 salmon #f26e6e）
   const CASH_COLOR = getLabelColor('現金');
 
+  // 圓餅圖是否顯示現金（讀取 localStorage 記憶，預設 true）
+  const showCash = (localStorage.getItem('pieShowCash') !== 'false');
+  const showCashEl = document.getElementById('showCashPie');
+  if (showCashEl) showCashEl.checked = showCash;
+
   // ── sorted holdings and cashVal needed early
   const sorted = [...holdings].sort((a,b) => (b.shares*b.price)-(a.shares*a.price));
-  const cashVal = Math.max(cash, 0);
+  const cashVal = Math.max(cash, 0);           // 集中度表等用完整現金
+  const pieCashVal = showCash ? cashVal : 0;   // 圓餅圖依 toggle 決定
 
   // ── 顏色編輯器
   const allLabelsList = [...sorted.map(h => h.name || h.ticker)];
@@ -3073,8 +3090,8 @@ function renderAllocation() {
     tickerMap[key].value += mv;
   });
   const aggregated = Object.values(tickerMap).sort((a,b) => b.value - a.value);
-  const stockLabels = [...aggregated.map(a => a.label), '現金'];
-  const stockData   = [...aggregated.map(a => a.value), cashVal];
+  const stockLabels = showCash ? [...aggregated.map(a => a.label), '現金'] : aggregated.map(a => a.label);
+  const stockData   = showCash ? [...aggregated.map(a => a.value), pieCashVal] : aggregated.map(a => a.value);
   const stockColors = stockLabels.map(l => getLabelColor(l));
   const totalForPct = stockData.reduce((s,v) => s+v, 0);
 
@@ -3096,11 +3113,11 @@ function renderAllocation() {
         <span class="legend-pct">${w.toFixed(1)}%</span>
       </li>`;
     }),
-    `<li class="legend-item">
+    showCash ? `<li class="legend-item">
       <span class="legend-dot" style="background:${CASH_COLOR}"></span>
       <span class="legend-name">現金</span>
-      <span class="legend-pct" style="color:${CASH_COLOR}">${totalForPct===0?'0.0':(cashVal/totalForPct*100).toFixed(1)}%</span>
-    </li>`
+      <span class="legend-pct" style="color:${CASH_COLOR}">${totalForPct===0?'0.0':(pieCashVal/totalForPct*100).toFixed(1)}%</span>
+    </li>` : ''
   ].join('');
 
   // ── 產業別佔比 (含現金)
@@ -3110,7 +3127,7 @@ function renderAllocation() {
     const mv = h.tradeType === '可轉債' ? (h.cost||0) + (h.price||0) : h.shares * h.price;
     sectorMap[s] = (sectorMap[s] || 0) + mv;
   });
-  if (cashVal > 0) sectorMap['現金'] = (sectorMap['現金'] || 0) + cashVal;
+  if (showCash && cashVal > 0) sectorMap['現金'] = (sectorMap['現金'] || 0) + cashVal;
   const sectors = Object.entries(sectorMap).sort((a,b) => b[1]-a[1]);
   const sectorLabels = sectors.map(s => s[0]);
   const sectorData   = sectors.map(s => s[1]);
