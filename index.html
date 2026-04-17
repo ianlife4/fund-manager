@@ -685,6 +685,19 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
 
+    <div class="section add-panel" style="margin-bottom:20px;">
+      <div class="section-header"><span class="section-title">📋 貼上券商資料（一鍵更新）</span></div>
+      <div class="section-body">
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">從國票網站複製持倉表格，貼到下方。系統會自動更新現價，新股票自動新增。</p>
+        <textarea id="brokerPaste" rows="5" placeholder="從券商網站複製表格後貼在這裡..."
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:10px;resize:vertical;"></textarea>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+          <button class="btn btn-gold" onclick="parseBrokerData()">解析並更新</button>
+          <span id="brokerParseResult" style="font-size:12px;color:var(--text-dim);"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-header">
         <span class="section-title">持倉明細</span>
@@ -1971,6 +1984,93 @@ function addHolding() {
 
 function clearPortfolioForm() {
   ['p_ticker','p_name','p_shares','p_cost','p_price'].forEach(id => document.getElementById(id).value = '');
+}
+
+/* ── 券商資料貼上解析 ── */
+function parseBrokerData() {
+  const raw = document.getElementById('brokerPaste').value.trim();
+  const resultEl = document.getElementById('brokerParseResult');
+  if (!raw) { resultEl.textContent = '⚠️ 請先貼上資料'; return; }
+
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  let updated = 0, added = 0, skipped = 0;
+
+  for (const line of lines) {
+    const cols = line.split(/\t/);
+    if (cols.length < 10) { skipped++; continue; }
+
+    // col0: 類別  col1: 股票名稱  col2: 即時庫存  col8: 成本均價  col9: 現價
+    const rawType = cols[0].trim();
+    const rawName = cols[1].trim();
+    const rawShares = cols[2].trim();
+    const rawCost = cols[8].trim();
+    const rawPrice = cols[9].trim();
+
+    // 跳過表頭
+    if (rawType === '類別' || rawName === '股票名稱') { skipped++; continue; }
+    // 跳過非持股行（例如小計行）
+    if (!rawName || rawName === '合計' || rawName === '小計') { skipped++; continue; }
+
+    // 解析類別
+    let tradeType = '現股';
+    if (rawType.includes('融資')) tradeType = '融資';
+    else if (rawType.includes('融券')) tradeType = '融券';
+    else if (rawType.includes('期貨')) tradeType = '期貨';
+
+    // 解析股票代號與名稱：格式可能是 "6921 台表科" 或 "6921台表科"
+    const nameMatch = rawName.match(/^(\d{4,6})\s*(.+)/);
+    let ticker = '', name = rawName;
+    if (nameMatch) {
+      ticker = nameMatch[1];
+      name = nameMatch[2].trim();
+    }
+
+    // 解析數值（移除逗號）
+    const shares = parseFloat(rawShares.replace(/,/g, ''));
+    const cost = parseFloat(rawCost.replace(/,/g, ''));
+    const price = parseFloat(rawPrice.replace(/,/g, ''));
+
+    if (isNaN(shares) || isNaN(cost) || isNaN(price)) { skipped++; continue; }
+
+    // 找同代號 + 同交易類別的持倉
+    const existing = ticker ? state.holdings.find(h => h.ticker === ticker && h.tradeType === tradeType) : null;
+
+    if (existing) {
+      existing.shares = shares;
+      existing.cost = cost;
+      existing.price = price;
+      existing.name = name;
+      // 重設手動覆寫值，讓公式重新計算
+      if (!existing.costLocked) existing.manualCost = null;
+      if (!existing.marketLocked) existing.manualMarket = null;
+      updated++;
+    } else {
+      state.holdings.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+        tradeType, ticker, name, shares, cost, price,
+        sector: '其他',
+        feeDiscount: 6,
+        marginRate: tradeType === '融資' ? 0.6 : null,
+        marginDays: 0,
+        futuresFee: tradeType === '期貨' ? 60 : 0,
+        manualCost: null, manualMarket: null,
+        costLocked: false, marketLocked: false,
+      });
+      added++;
+    }
+  }
+
+  if (updated + added === 0) {
+    resultEl.textContent = '⚠️ 無法解析，請確認格式是否正確';
+    resultEl.style.color = '#f26e6e';
+    return;
+  }
+
+  save(); renderPortfolio();
+  resultEl.style.color = '#4ecdc4';
+  resultEl.textContent = `✅ 完成！更新 ${updated} 筆，新增 ${added} 筆` + (skipped ? `，跳過 ${skipped} 行` : '');
+  document.getElementById('brokerPaste').value = '';
+  toast(`券商資料已匯入：更新${updated} 新增${added}`);
 }
 
 function updatePrice(id, val) {
