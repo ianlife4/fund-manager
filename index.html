@@ -533,7 +533,58 @@ document.addEventListener('DOMContentLoaded', () => {
     color: var(--blue);
     border-color: var(--blue);
   }
+  /* 截圖上傳區 */
+  .screenshot-drop {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+    min-height: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .screenshot-drop:hover, .screenshot-drop.dragover {
+    border-color: var(--gold);
+    background: rgba(201,168,76,0.05);
+  }
+  .screenshot-drop img {
+    max-width: 100%;
+    max-height: 260px;
+    border-radius: 8px;
+    margin-top: 8px;
+  }
+  .screenshot-drop .drop-hint {
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  .screenshot-drop .drop-icon {
+    font-size: 28px;
+    opacity: 0.6;
+  }
+  .ocr-progress {
+    width: 100%;
+    height: 6px;
+    background: var(--surface2);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 8px;
+    display: none;
+  }
+  .ocr-progress-bar {
+    height: 100%;
+    background: var(--gold);
+    width: 0%;
+    transition: width .3s;
+    border-radius: 3px;
+  }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -686,14 +737,43 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
 
     <div class="section add-panel" style="margin-bottom:20px;">
-      <div class="section-header"><span class="section-title">📋 貼上券商資料（一鍵更新）</span></div>
+      <div class="section-header"><span class="section-title">📋 匯入券商資料（一鍵更新）</span></div>
       <div class="section-body">
-        <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">從國票網站複製持倉表格，貼到下方。系統會自動更新現價，新股票自動新增。</p>
-        <textarea id="brokerPaste" rows="5" placeholder="從券商網站複製表格後貼在這裡..."
-          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:10px;resize:vertical;"></textarea>
-        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
-          <button class="btn btn-gold" onclick="parseBrokerData()">解析並更新</button>
-          <span id="brokerParseResult" style="font-size:12px;color:var(--text-dim);"></span>
+        <!-- 方式切換 -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn" id="tabPaste" onclick="switchBrokerTab('paste')" style="flex:1;font-size:12px;padding:6px 0;background:rgba(201,168,76,0.15);color:var(--gold);border-color:var(--gold);">📋 貼上文字</button>
+          <button class="btn" id="tabScreenshot" onclick="switchBrokerTab('screenshot')" style="flex:1;font-size:12px;padding:6px 0;">📸 上傳截圖</button>
+        </div>
+
+        <!-- 方式1: 貼上文字 -->
+        <div id="brokerTabPaste">
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">從國票網站複製持倉表格，貼到下方。</p>
+          <textarea id="brokerPaste" rows="5" placeholder="從券商網站複製表格後貼在這裡..."
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;padding:10px;resize:vertical;"></textarea>
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-gold" onclick="parseBrokerData()">解析並更新</button>
+            <span id="brokerParseResult" style="font-size:12px;color:var(--text-dim);"></span>
+          </div>
+        </div>
+
+        <!-- 方式2: 截圖上傳 -->
+        <div id="brokerTabScreenshot" style="display:none;">
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">截圖券商庫存頁面，拖曳或點選上傳，系統會自動辨識文字。</p>
+          <div class="screenshot-drop" id="screenshotDrop" onclick="document.getElementById('screenshotInput').click()">
+            <div class="drop-icon">📷</div>
+            <div class="drop-hint">點擊選擇圖片 或 拖曳圖片到這裡</div>
+            <img id="screenshotPreview" style="display:none;" alt="preview">
+          </div>
+          <input type="file" id="screenshotInput" accept="image/*" style="display:none;" onchange="handleScreenshot(this.files[0])">
+          <div class="ocr-progress" id="ocrProgress">
+            <div class="ocr-progress-bar" id="ocrProgressBar"></div>
+          </div>
+          <div id="ocrStatus" style="font-size:12px;color:var(--text-dim);margin-top:6px;"></div>
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-gold" id="ocrParseBtn" onclick="ocrAndParse()" disabled>辨識並更新</button>
+            <button class="btn" onclick="clearScreenshot()" style="font-size:12px;">清除圖片</button>
+            <span id="ocrParseResult" style="font-size:12px;color:var(--text-dim);"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -2071,6 +2151,253 @@ function parseBrokerData() {
   resultEl.textContent = `✅ 完成！更新 ${updated} 筆，新增 ${added} 筆` + (skipped ? `，跳過 ${skipped} 行` : '');
   document.getElementById('brokerPaste').value = '';
   toast(`券商資料已匯入：更新${updated} 新增${added}`);
+}
+
+/* ── 截圖 OCR 功能 ── */
+let screenshotFile = null;
+
+function switchBrokerTab(tab) {
+  const pasteDiv = document.getElementById('brokerTabPaste');
+  const ssDiv = document.getElementById('brokerTabScreenshot');
+  const btnPaste = document.getElementById('tabPaste');
+  const btnSS = document.getElementById('tabScreenshot');
+  if (tab === 'paste') {
+    pasteDiv.style.display = '';
+    ssDiv.style.display = 'none';
+    btnPaste.style.background = 'rgba(201,168,76,0.15)';
+    btnPaste.style.color = 'var(--gold)';
+    btnPaste.style.borderColor = 'var(--gold)';
+    btnSS.style.background = '';
+    btnSS.style.color = '';
+    btnSS.style.borderColor = '';
+  } else {
+    pasteDiv.style.display = 'none';
+    ssDiv.style.display = '';
+    btnSS.style.background = 'rgba(201,168,76,0.15)';
+    btnSS.style.color = 'var(--gold)';
+    btnSS.style.borderColor = 'var(--gold)';
+    btnPaste.style.background = '';
+    btnPaste.style.color = '';
+    btnPaste.style.borderColor = '';
+  }
+}
+
+// 拖曳上傳
+(function initDragDrop() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const drop = document.getElementById('screenshotDrop');
+    if (!drop) return;
+    ['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('dragover'); }));
+    ['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('dragover'); }));
+    drop.addEventListener('drop', ev => {
+      const file = ev.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) handleScreenshot(file);
+    });
+    // 支援貼上截圖 (Ctrl+V)
+    document.addEventListener('paste', ev => {
+      if (document.getElementById('brokerTabScreenshot').style.display === 'none') return;
+      const items = ev.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          ev.preventDefault();
+          handleScreenshot(item.getAsFile());
+          break;
+        }
+      }
+    });
+  });
+})();
+
+function handleScreenshot(file) {
+  if (!file) return;
+  screenshotFile = file;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const preview = document.getElementById('screenshotPreview');
+    preview.src = e.target.result;
+    preview.style.display = 'block';
+    document.getElementById('screenshotDrop').querySelector('.drop-hint').textContent = file.name;
+    document.getElementById('screenshotDrop').querySelector('.drop-icon').textContent = '✅';
+    document.getElementById('ocrParseBtn').disabled = false;
+    document.getElementById('ocrStatus').textContent = '圖片已載入，點擊「辨識並更新」開始處理';
+    document.getElementById('ocrParseResult').textContent = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearScreenshot() {
+  screenshotFile = null;
+  const preview = document.getElementById('screenshotPreview');
+  preview.src = '';
+  preview.style.display = 'none';
+  document.getElementById('screenshotDrop').querySelector('.drop-hint').textContent = '點擊選擇圖片 或 拖曳圖片到這裡';
+  document.getElementById('screenshotDrop').querySelector('.drop-icon').textContent = '📷';
+  document.getElementById('ocrParseBtn').disabled = true;
+  document.getElementById('ocrProgress').style.display = 'none';
+  document.getElementById('ocrProgressBar').style.width = '0%';
+  document.getElementById('ocrStatus').textContent = '';
+  document.getElementById('ocrParseResult').textContent = '';
+  document.getElementById('screenshotInput').value = '';
+}
+
+async function ocrAndParse() {
+  if (!screenshotFile) { toast('請先上傳截圖'); return; }
+  const statusEl = document.getElementById('ocrStatus');
+  const progressDiv = document.getElementById('ocrProgress');
+  const progressBar = document.getElementById('ocrProgressBar');
+  const resultEl = document.getElementById('ocrParseResult');
+  const btn = document.getElementById('ocrParseBtn');
+
+  btn.disabled = true;
+  btn.textContent = '辨識中...';
+  progressDiv.style.display = 'block';
+  statusEl.textContent = '正在載入 OCR 引擎...';
+  resultEl.textContent = '';
+
+  try {
+    const worker = await Tesseract.createWorker('chi_tra+eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          const pct = Math.round(m.progress * 100);
+          progressBar.style.width = pct + '%';
+          statusEl.textContent = `辨識中... ${pct}%`;
+        } else if (m.status) {
+          statusEl.textContent = m.status;
+        }
+      }
+    });
+
+    const { data: { text } } = await worker.recognize(screenshotFile);
+    await worker.terminate();
+
+    progressBar.style.width = '100%';
+    statusEl.textContent = '辨識完成，正在解析資料...';
+
+    // 將 OCR 結果填入文字區並自動解析
+    const ocrText = text.trim();
+    if (!ocrText) {
+      statusEl.textContent = '⚠️ 無法辨識出文字，請確認截圖是否清晰';
+      statusEl.style.color = '#f26e6e';
+      btn.disabled = false;
+      btn.textContent = '辨識並更新';
+      return;
+    }
+
+    // 嘗試解析 OCR 文字
+    const parseResult = parseOcrBrokerText(ocrText);
+
+    if (parseResult.updated + parseResult.added === 0) {
+      // 辨識到文字但無法解析成持倉 → 顯示原始文字讓使用者檢查
+      statusEl.innerHTML = '⚠️ 辨識到文字但無法自動解析，已填入文字區，請手動調整後使用「貼上文字」模式';
+      statusEl.style.color = '#f5a623';
+      switchBrokerTab('paste');
+      document.getElementById('brokerPaste').value = ocrText;
+    } else {
+      save(); renderPortfolio();
+      resultEl.style.color = '#4ecdc4';
+      resultEl.textContent = `✅ 完成！更新 ${parseResult.updated} 筆，新增 ${parseResult.added} 筆` + (parseResult.skipped ? `，跳過 ${parseResult.skipped} 行` : '');
+      statusEl.textContent = '辨識並更新成功';
+      statusEl.style.color = '#4ecdc4';
+      toast(`截圖辨識匯入：更新${parseResult.updated} 新增${parseResult.added}`);
+    }
+  } catch (err) {
+    statusEl.textContent = '❌ 辨識失敗：' + err.message;
+    statusEl.style.color = '#f26e6e';
+    console.error('OCR error:', err);
+  }
+  btn.disabled = false;
+  btn.textContent = '辨識並更新';
+}
+
+function parseOcrBrokerText(text) {
+  // OCR 辨識出來的文字可能用空格分隔（而非tab），需要智能解析
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  let updated = 0, added = 0, skipped = 0;
+
+  for (const line of lines) {
+    // 先嘗試 tab 分隔
+    let cols = line.split(/\t/);
+    if (cols.length < 5) {
+      // OCR 通常用多個空格分隔
+      cols = line.split(/\s{2,}/);
+    }
+    if (cols.length < 5) { skipped++; continue; }
+
+    // 從每一行找股票代號模式: 4-6位數字
+    const tickerMatch = line.match(/(\d{4,6})\s*([^\d\s]\S*)/);
+    if (!tickerMatch) { skipped++; continue; }
+
+    const ticker = tickerMatch[1];
+    const name = tickerMatch[2].replace(/\s+/g, '').trim();
+
+    // 跳過表頭
+    if (name === '股票名稱' || name === '名稱') { skipped++; continue; }
+
+    // 判斷類別
+    let tradeType = '現股';
+    const lowerLine = line.trim();
+    if (lowerLine.startsWith('融資') || lowerLine.includes('融資')) tradeType = '融資';
+    else if (lowerLine.startsWith('融券') || lowerLine.includes('融券')) tradeType = '融券';
+
+    // 從行中提取所有數字（用於找庫存、成本、現價）
+    // 移除股票代號後，取剩餘的數字
+    const afterTicker = line.substring(line.indexOf(tickerMatch[0]) + tickerMatch[0].length);
+    const numbers = afterTicker.match(/[\d,]+\.?\d*/g);
+    if (!numbers || numbers.length < 3) { skipped++; continue; }
+
+    // 清理數字
+    const nums = numbers.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+    if (nums.length < 3) { skipped++; continue; }
+
+    // 國票格式（14欄）: 即時庫存[0], 昨日餘額[1], 股票市值[2], 今買成[3], 今賣成[4],
+    //                    付出成本[5], 成本均價[6], 現價[7], 預估收入[8], ...
+    // 但 OCR 可能掉字，所以用啟發式：
+    // 庫存通常是整數且是1000的倍數，成本均價和現價通常是小數
+    let shares, cost, price;
+
+    if (nums.length >= 8) {
+      // 完整格式：index 0=庫存, 6=成本均價, 7=現價
+      shares = nums[0];
+      cost = nums[6];
+      price = nums[7];
+    } else if (nums.length >= 5) {
+      // 部分欄位：試著用位置推斷
+      shares = nums[0];
+      cost = nums[nums.length - 3] || nums[1];
+      price = nums[nums.length - 2] || nums[2];
+    } else {
+      // 最少3個數字：庫存、成本、現價
+      shares = nums[0];
+      cost = nums[1];
+      price = nums[2];
+    }
+
+    if (!shares || !cost || !price || shares <= 0) { skipped++; continue; }
+
+    const existing = state.holdings.find(h => h.ticker === ticker && h.tradeType === tradeType);
+    if (existing) {
+      existing.shares = shares;
+      existing.cost = cost;
+      existing.price = price;
+      existing.name = name;
+      if (!existing.costLocked) existing.manualCost = null;
+      if (!existing.marketLocked) existing.manualMarket = null;
+      updated++;
+    } else {
+      state.holdings.push({
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+        tradeType, ticker, name, shares, cost, price,
+        sector: '其他', feeDiscount: 6,
+        marginRate: tradeType === '融資' ? 0.6 : null,
+        marginDays: 0, futuresFee: 0,
+        manualCost: null, manualMarket: null,
+        costLocked: false, marketLocked: false,
+      });
+      added++;
+    }
+  }
+  return { updated, added, skipped };
 }
 
 function updatePrice(id, val) {
