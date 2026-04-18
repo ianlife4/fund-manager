@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.17-cb7</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.18-cb8</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -2754,6 +2754,18 @@ function renderPerformance() {
       chartData.push({ date: d.date, nav: estNav, type: 'dist' });
     }
   });
+
+  // ── 同日期去重（防止藍色虛線走成水平線）
+  // 優先級：now > dist > snap > cf （同日期只保留一個）
+  const _prio = { cf: 1, snap: 2, dist: 3, now: 4 };
+  const _byDate = {};
+  chartData.forEach(p => {
+    const cur = _byDate[p.date];
+    if (!cur || (_prio[p.type] || 0) >= (_prio[cur.type] || 0)) {
+      _byDate[p.date] = p;
+    }
+  });
+  chartData = Object.values(_byDate);
 
   chartData.sort((a,b) => a.date.localeCompare(b.date));
 
