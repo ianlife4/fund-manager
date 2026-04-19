@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.18-cb9</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.18-cb10</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -651,7 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
       <div class="section">
         <div class="section-header">
-          <span class="section-title">本週快照記錄</span>
+          <span class="section-title">歷史快照記錄</span>
           <button class="btn btn-gold btn-sm" onclick="saveWeeklySnapshot()">＋ 記錄本週</button>
         </div>
         <div class="section-body">
@@ -1640,11 +1640,20 @@ function upColor(n) { return n >= 0 ? 'rgba(242,110,110,0.75)' : 'rgba(62,207,14
 function renderOverview() {
   const mv = totalMarketValue(), tc = totalCost(), pnl = totalPnL(), pr = profitRate();
   const nav = fundTotalNav();
-  const snaps = state.snapshots;
+  const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
+
+  // 「距上次報酬」：以「目前淨值」對比「最近一筆快照」，並顯示距今天數
   let weekReturn = 0;
-  if (snaps.length >= 2) {
-    const prev = snaps[snaps.length-2].nav, cur = snaps[snaps.length-1].nav;
-    weekReturn = ((cur - prev) / prev) * 100;
+  let weekLabel = '距上次報酬';
+  let daysSince = null;
+  if (snaps.length >= 1) {
+    const latest = snaps[snaps.length-1];
+    weekReturn = ((nav - latest.nav) / latest.nav) * 100;
+    const today = new Date();
+    const latestD = new Date(latest.date);
+    daysSince = Math.round((today - latestD) / 86400000);
+    if (daysSince <= 8) weekLabel = '本週報酬';
+    else weekLabel = `距上次 ${daysSince} 天`;
   }
 
   document.getElementById('summaryCards').innerHTML = `
@@ -1671,21 +1680,22 @@ function renderOverview() {
       <div class="card-value" style="color:var(--blue)">${state.holdings.length}</div>
     </div>
     <div class="card">
-      <div class="card-label">本週報酬</div>
-      <div class="card-value ${signClass(weekReturn)}">${snaps.length >= 2 ? fmtPct(weekReturn) : '—'}</div>
+      <div class="card-label">${weekLabel}</div>
+      <div class="card-value ${signClass(weekReturn)}">${snaps.length >= 1 ? fmtPct(weekReturn) : '—'}</div>
+      ${snaps.length >= 1 ? `<div class="card-change" style="color:var(--text-muted);font-size:11px">vs ${snaps[snaps.length-1].date}</div>` : ''}
     </div>
   `;
 
-  // Snapshots
+  // Snapshots（用已排序的 snaps，新到舊顯示）
   const sl = document.getElementById('snapshotList');
-  if (state.snapshots.length === 0) {
+  if (snaps.length === 0) {
     sl.innerHTML = '<div class="empty"><div class="empty-icon">📷</div>尚無快照，點選「記錄本週」開始追蹤</div>';
   } else {
-    sl.innerHTML = [...state.snapshots].reverse().slice(0, 10).map((s, i) => {
-      const arr = [...state.snapshots].reverse();
+    const reversed = [...snaps].reverse();
+    sl.innerHTML = reversed.slice(0, 10).map((s, i) => {
       let ret = '—';
-      if (i < arr.length - 1) {
-        const prev = arr[i+1].nav;
+      if (i < reversed.length - 1) {
+        const prev = reversed[i+1].nav;
         ret = fmtPct(((s.nav - prev) / prev) * 100);
       }
       const retCls = ret.startsWith('+') ? 'positive' : ret.startsWith('-') ? 'negative' : 'neutral';
