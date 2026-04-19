@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.19-cb16</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.19-cb17</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -996,13 +996,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <!-- 顏色自訂面板 -->
     <div class="add-panel" style="margin-bottom:20px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:12px;">
         <div class="add-panel-title" style="margin-bottom:0;">🎨 圓餅圖顏色自訂</div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);cursor:pointer;user-select:none;">
-          <input type="checkbox" id="showCashPie" checked onchange="togglePieCash(this.checked)"
-            style="accent-color:var(--gold);cursor:pointer;width:16px;height:16px;" />
-          圓餅圖顯示現金
-        </label>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);">
+            <span>計算基準：</span>
+            <label style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:3px;">
+              <input type="radio" name="pieBasis" value="market" onchange="togglePieBasis('market')"
+                style="accent-color:var(--gold);cursor:pointer;" />市值
+            </label>
+            <label style="cursor:pointer;user-select:none;display:flex;align-items:center;gap:3px;">
+              <input type="radio" name="pieBasis" value="cost" onchange="togglePieBasis('cost')"
+                style="accent-color:var(--gold);cursor:pointer;" />付出成本
+            </label>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);cursor:pointer;user-select:none;">
+            <input type="checkbox" id="showCashPie" checked onchange="togglePieCash(this.checked)"
+              style="accent-color:var(--gold);cursor:pointer;width:16px;height:16px;" />
+            圓餅圖顯示現金
+          </label>
+        </div>
       </div>
       <div id="colorEditorList" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;"></div>
       <div style="display:flex;gap:10px;">
@@ -1014,7 +1027,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="charts-grid">
       <div class="section">
         <div class="section-header">
-          <span class="section-title">個股佔比</span>
+          <span class="section-title">個股佔比 <span id="pieBasisLabel" style="font-size:11px;color:var(--text-muted);font-weight:normal;margin-left:6px;"></span></span>
         </div>
         <div class="section-body">
           <div class="pie-wrap">
@@ -3195,6 +3208,12 @@ function togglePieCash(checked) {
   toast(checked ? '圓餅圖已顯示現金' : '圓餅圖已隱藏現金');
 }
 
+function togglePieBasis(basis) {
+  localStorage.setItem('pieBasis', basis);
+  renderAllocation();
+  toast(basis === 'cost' ? '圓餅圖改用付出成本計算' : '圓餅圖改用市值計算');
+}
+
 // Fix COLORS reference for investor cards (use index-based)
 const COLORS = DEFAULT_COLORS;
 
@@ -3223,6 +3242,30 @@ function renderAllocation() {
   const showCashEl = document.getElementById('showCashPie');
   if (showCashEl) showCashEl.checked = showCash;
 
+  // 圓餅圖計算基準：market（市值）或 cost（付出成本）
+  const pieBasis = localStorage.getItem('pieBasis') || 'market';
+  document.querySelectorAll('input[name="pieBasis"]').forEach(r => {
+    r.checked = (r.value === pieBasis);
+  });
+  const basisLabelEl = document.getElementById('pieBasisLabel');
+  if (basisLabelEl) basisLabelEl.textContent = pieBasis === 'cost' ? '（以付出成本計）' : '（以市值計）';
+
+  // 取得每筆持倉在目前基準下的數值
+  const pieValueOf = (h) => {
+    if (pieBasis === 'cost') {
+      // 付出成本：CB = cost，融資 = 自付金額，其他 = shares * cost
+      if (h.tradeType === '可轉債') return h.cost || 0;
+      if (h.manualCost != null) return h.manualCost;
+      const totalAmt = h.shares * h.cost;
+      if (h.tradeType === '融資') return Math.round(totalAmt * (1 - (h.marginRate || 0.6)));
+      return totalAmt;
+    }
+    // market：市值（預設）
+    if (h.marketLocked && h.manualMarket != null) return h.manualMarket;
+    if (h.tradeType === '可轉債') return (h.cost || 0) + (h.price || 0);
+    return h.shares * h.price;
+  };
+
   // ── sorted holdings and cashVal needed early
   const sorted = [...holdings].sort((a,b) => (b.shares*b.price)-(a.shares*a.price));
   const cashVal = Math.max(cash, 0);           // 集中度表等用完整現金
@@ -3247,15 +3290,14 @@ function renderAllocation() {
     if (existing) existing.destroy();
   });
 
-  // ── 個股佔比：同代號合併（含現金）
+  // ── 個股佔比：同代號合併（依 pieBasis 決定用市值或付出成本）
   const tickerMap = {};
   holdings.forEach(h => {
     const key = h.ticker || h.name;
     const label = h.name || h.ticker;
-    const mv = h.marketLocked && h.manualMarket != null ? h.manualMarket
-      : (h.tradeType === '可轉債' ? (h.cost||0) + (h.price||0) : h.shares * h.price);
+    const val = pieValueOf(h);
     if (!tickerMap[key]) tickerMap[key] = { label, value: 0 };
-    tickerMap[key].value += mv;
+    tickerMap[key].value += val;
   });
   const aggregated = Object.values(tickerMap).sort((a,b) => b.value - a.value);
   const stockLabels = showCash ? [...aggregated.map(a => a.label), '現金'] : aggregated.map(a => a.label);
@@ -3288,12 +3330,11 @@ function renderAllocation() {
     </li>` : ''
   ].join('');
 
-  // ── 產業別佔比 (含現金)
+  // ── 產業別佔比（依 pieBasis 決定用市值或付出成本）
   const sectorMap = {};
   holdings.forEach(h => {
     const s = h.sector || '其他';
-    const mv = h.tradeType === '可轉債' ? (h.cost||0) + (h.price||0) : h.shares * h.price;
-    sectorMap[s] = (sectorMap[s] || 0) + mv;
+    sectorMap[s] = (sectorMap[s] || 0) + pieValueOf(h);
   });
   if (showCash && cashVal > 0) sectorMap['現金'] = (sectorMap['現金'] || 0) + cashVal;
   const sectors = Object.entries(sectorMap).sort((a,b) => b[1]-a[1]);
