@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.18-cb8</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.18-cb9</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -988,7 +988,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <!-- 顏色自訂面板 -->
     <div class="add-panel" style="margin-bottom:20px;">
-      <div class="add-panel-title">🎨 圓餅圖顏色自訂</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div class="add-panel-title" style="margin-bottom:0;">🎨 圓餅圖顏色自訂</div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);cursor:pointer;user-select:none;">
+          <input type="checkbox" id="showCashPie" checked onchange="togglePieCash(this.checked)"
+            style="accent-color:var(--gold);cursor:pointer;width:16px;height:16px;" />
+          圓餅圖顯示現金
+        </label>
+      </div>
       <div id="colorEditorList" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;"></div>
       <div style="display:flex;gap:10px;">
         <button class="btn btn-gold btn-sm" onclick="applyColors()">套用顏色</button>
@@ -998,13 +1005,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     <div class="charts-grid">
       <div class="section">
-        <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="section-header">
           <span class="section-title">個股佔比</span>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;">
-            <input type="checkbox" id="showCashPie" checked onchange="togglePieCash(this.checked)"
-              style="accent-color:var(--gold);cursor:pointer;" />
-            顯示現金
-          </label>
         </div>
         <div class="section-body">
           <div class="pie-wrap">
