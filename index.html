@@ -3114,21 +3114,29 @@ function renderPerformance() {
       document.getElementById(id).textContent = '—';
     });
   } else {
-    // 最高獲利 = 黃線最高點
-    const maxConfirmed = Math.max(...confirmedAll);
-    // MDD = 黃線序列
-    let maxDD = 0, peak = confirmedAll[0];
-    confirmedAll.forEach(v => {
+    // 最高獲利 & MDD：以「真實淨值」（快照含未實現）為基準，而非僅確認淨值
+    // 建立 NAV 時序：所有快照 NAV + 當前 NAV
+    const navPoints = [...(state.snapshots || [])]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(s => ({ date: s.date, nav: s.nav }));
+    navPoints.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav() });
+
+    const navSeries = navPoints.map(p => p.nav);
+    const maxNav = navSeries.length > 0 ? Math.max(...navSeries) : fundTotalNav();
+
+    let maxDD = 0, peak = navSeries[0] || 0;
+    navSeries.forEach(v => {
       if (v > peak) peak = v;
       const dd = peak > 0 ? (peak - v) / peak * 100 : 0;
       if (dd > maxDD) maxDD = dd;
     });
-    // 累計報酬率 = 已實現 ÷ 第一筆入金
-    const totalRet = (totalRealized / firstDeposit) * 100;
+
+    // 累計報酬率 = (已實現 + 未實現) ÷ 第一筆入金（對初始資金的總回報）
+    const totalRet = ((totalRealized + unrealizedPnL) / firstDeposit) * 100;
     const el = document.getElementById('perf_total');
     el.textContent = fmtPct(totalRet);
     el.className = 'card-value ' + (totalRet >= 0 ? 'positive' : 'negative');
-    document.getElementById('perf_high').textContent = fmtMoney(maxConfirmed);
+    document.getElementById('perf_high').textContent = fmtMoney(maxNav);
     document.getElementById('perf_drawdown').textContent = maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%';
   }
 
