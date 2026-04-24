@@ -2386,22 +2386,23 @@ function parseSpaceRow(line) {
   const shares = Math.abs(nums[0]);
   if (shares <= 0) return null;
 
-  let cost = 0, price = 0;
+  let cost = 0, price = 0, totalCost = 0, priceIdx = -1;
   let costIdx = -1;
 
   // 方法1：均價在「付出成本」之後（國票格式）
-  //   nums[i-1] ≈ nums[i] × 庫存
+  //   nums[i-1] ≈ nums[i] × 庫存 → 付出成本 = nums[costIdx-1]
   for (let i = 1; i < nums.length; i++) {
     if (nums[i] <= 0 || nums[i-1] <= 0) continue;
     if (nums[i-1] >= nums[i] * shares * 0.9 && nums[i-1] <= nums[i] * shares * 1.1
         && Math.abs(nums[i] - nums[i-1] / shares) < Math.max(1, nums[i] * 0.01)) {
       costIdx = i;
+      totalCost = nums[i-1];
       break;
     }
   }
 
   // 方法2：均價在「總成本」之前（名稱(代號)格式）
-  //   nums[i] × 庫存 ≈ 後面某個 nums[j]
+  //   nums[i] × 庫存 ≈ 後面某個 nums[j] → 付出成本 = nums[j]
   if (costIdx === -1) {
     for (let i = 1; i < nums.length - 1; i++) {
       if (nums[i] <= 0) continue;
@@ -2411,6 +2412,7 @@ function parseSpaceRow(line) {
         if (nums[j] <= 0) continue;
         if (Math.abs(nums[j] - product) / product < 0.01) {
           costIdx = i;
+          totalCost = nums[j];
           break;
         }
       }
@@ -2426,12 +2428,27 @@ function parseSpaceRow(line) {
     if (nums[i] <= 0) continue;
     if (nums[i] >= cost * 0.1 && nums[i] <= cost * 10) {
       price = nums[i];
+      priceIdx = i;
       break;
     }
   }
 
   if (cost <= 0 || price <= 0) return null;
-  return { tradeType, ticker, name, shares, cost, price, nameClean: false };
+
+  // 找預估收入（含手續費扣減）：priceIdx 之後，≈ price × shares 的大數
+  // 國票格式中預估收入通常在現價之後且略小於市值（扣手續費）
+  let estIncome = 0;
+  const expectedMV = price * shares;
+  for (let i = priceIdx + 1; i < nums.length; i++) {
+    if (nums[i] <= 0) continue;
+    // 預估收入通常是市值的 98%~100%
+    if (nums[i] >= expectedMV * 0.97 && nums[i] <= expectedMV * 1.01) {
+      estIncome = nums[i];
+      break;
+    }
+  }
+
+  return { tradeType, ticker, name, shares, cost, price, totalCost, estIncome, nameClean: false };
 }
 
 /* 套用解析結果到持倉 */
@@ -2443,8 +2460,14 @@ function applyBrokerRow(r) {
     existing.price = r.price;
     // 只在從網站直接複製（文字乾淨）時才更新名稱，OCR 名稱可能有錯不覆蓋
     if (r.nameClean) existing.name = r.name;
-    if (!existing.costLocked) existing.manualCost = null;
+    // 使用券商精確付出成本（若有抓到）— 避免 均價×庫存 掉精度
+    if (!existing.costLocked) {
+      existing.manualCost = r.totalCost > 0 ? r.totalCost : null;
+    }
+    // 市值清空，使用 shares × price
     if (!existing.marketLocked) existing.manualMarket = null;
+    // 預估收入：券商有給就用券商的（含手續費），沒有則清空同步市值
+    existing.manualEst = r.estIncome > 0 ? r.estIncome : null;
     return true; // updated
   }
   state.holdings.push({
@@ -2454,7 +2477,9 @@ function applyBrokerRow(r) {
     sector: '其他', feeDiscount: 6,
     marginRate: r.tradeType === '融資' ? 0.6 : null,
     marginDays: 0, futuresFee: r.tradeType === '期貨' ? 60 : 0,
-    manualCost: null, manualMarket: null,
+    manualCost: r.totalCost > 0 ? r.totalCost : null,
+    manualMarket: null,
+    manualEst: r.estIncome > 0 ? r.estIncome : null,
     costLocked: false, marketLocked: false,
   });
   return false; // added
