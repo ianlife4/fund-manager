@@ -1677,15 +1677,21 @@ function renderOverview() {
   const nav = fundTotalNav();
   const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
 
-  // 「距上次報酬」：以「目前淨值」對比「最近一筆快照」，並顯示距今天數
+  // 「距上次報酬」：以「目前淨值」對比「今天以前最近一筆快照」
+  // （今天的快照是當下基準，不能拿來跟自己比）
   let weekReturn = 0;
   let weekLabel = '距上次報酬';
   let daysSince = null;
-  if (snaps.length >= 1) {
-    const latest = snaps[snaps.length-1];
-    weekReturn = ((nav - latest.nav) / latest.nav) * 100;
+  let baseSnap = null;
+  const todayISOStr = new Date().toISOString().slice(0,10);
+  // 從新到舊找第一筆 date < today 的快照
+  for (let i = snaps.length - 1; i >= 0; i--) {
+    if (snaps[i].date < todayISOStr) { baseSnap = snaps[i]; break; }
+  }
+  if (baseSnap) {
+    weekReturn = ((nav - baseSnap.nav) / baseSnap.nav) * 100;
     const today = new Date();
-    const latestD = new Date(latest.date);
+    const latestD = new Date(baseSnap.date);
     daysSince = Math.round((today - latestD) / 86400000);
     if (daysSince <= 8) weekLabel = '本週報酬';
     else weekLabel = `距上次 ${daysSince} 天`;
@@ -1716,8 +1722,8 @@ function renderOverview() {
     </div>
     <div class="card">
       <div class="card-label">${weekLabel}</div>
-      <div class="card-value ${signClass(weekReturn)}">${snaps.length >= 1 ? fmtPct(weekReturn) : '—'}</div>
-      ${snaps.length >= 1 ? `<div class="card-change" style="color:var(--text-muted);font-size:11px">vs ${snaps[snaps.length-1].date}</div>` : ''}
+      <div class="card-value ${signClass(weekReturn)}">${baseSnap ? fmtPct(weekReturn) : '—'}</div>
+      ${baseSnap ? `<div class="card-change" style="color:var(--text-muted);font-size:11px">vs ${baseSnap.date}</div>` : ''}
     </div>
   `;
 
