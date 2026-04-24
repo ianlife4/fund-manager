@@ -2345,54 +2345,54 @@ function parseTabRow(cols) {
 
 /* 空格 / OCR 分隔解析 */
 function parseSpaceRow(line) {
-  // 找股票代號（4~6位數字，前後為非數字）
-  const tickerMatch = line.match(/(?:^|[^\d])(\d{4,6})(?=[^\d,.]|$)/);
-  if (!tickerMatch) return null;
-  const ticker = tickerMatch[1];
-  const tickerIdx = tickerMatch.index + tickerMatch[0].indexOf(ticker);
+  let ticker = '';
+  let name = '';
+  let afterStr = '';
 
-  // 判斷類別：從代號前面的文字判斷
-  let tradeType = '現股';
-  const prefix = line.substring(0, tickerIdx);
-  if (/融\s*資/.test(prefix)) tradeType = '融資';
-  else if (/融\s*券/.test(prefix)) tradeType = '融券';
-  else if (/期\s*貨/.test(prefix)) tradeType = '期貨';
-
-  // 代號之後的文字
-  const afterTicker = line.substring(tickerIdx + ticker.length);
-
-  // 找數字區起點：第一個像「庫存數」的數（有逗號的整數 或 ≥100 的整數）
-  const firstNumMatch = afterTicker.match(/(\d{1,3}(?:,\d{3})+|\d{3,})(?:\s|$)/);
-  if (!firstNumMatch) return null;
-
-  // 名稱 = 代號與數字之間（去除空格、符號尾巴）
-  let name = afterTicker.substring(0, firstNumMatch.index)
-    .replace(/\s+/g, '').replace(/[\-\*\|]+$/, '').replace(/^[\-\*\|]+/, '').trim();
+  // 格式B：代號在括號內 — "名稱(6618) 現股 10,000 24.28 24.25 ..."
+  const parensMatch = line.match(/(\S[^()]*?)\s*\((\d{4,6})\)/);
+  if (parensMatch) {
+    ticker = parensMatch[2];
+    name = parensMatch[1].replace(/\s+/g, '')
+      .replace(/[\-\*\|]+$/, '').replace(/^[\-\*\|]+/, '').trim();
+    afterStr = line.substring(parensMatch.index + parensMatch[0].length);
+  } else {
+    // 格式A：獨立代號 — "[現股] 6921 名稱 1,000 ..."（國票）
+    const tickerMatch = line.match(/(?:^|[^\d])(\d{4,6})(?=[^\d,.]|$)/);
+    if (!tickerMatch) return null;
+    ticker = tickerMatch[1];
+    const tickerIdx = tickerMatch.index + tickerMatch[0].indexOf(ticker);
+    const afterTicker = line.substring(tickerIdx + ticker.length);
+    const firstNumMatch = afterTicker.match(/(\d{1,3}(?:,\d{3})+|\d{3,})(?:\s|$)/);
+    if (!firstNumMatch) return null;
+    name = afterTicker.substring(0, firstNumMatch.index)
+      .replace(/\s+/g, '').replace(/[\-\*\|]+$/, '').replace(/^[\-\*\|]+/, '').trim();
+    afterStr = afterTicker.substring(firstNumMatch.index);
+  }
   if (!name) name = ticker;
 
-  // 取出所有數字
-  const numbersStr = afterTicker.substring(firstNumMatch.index);
-  const numMatches = numbersStr.match(/\d[\d,]*\.?\d*/g);
+  // 判斷類別（整行搜尋）
+  let tradeType = '現股';
+  if (/融\s*資/.test(line)) tradeType = '融資';
+  else if (/融\s*券/.test(line)) tradeType = '融券';
+  else if (/期\s*貨/.test(line)) tradeType = '期貨';
+
+  // 取出所有數字（含負數）
+  const numMatches = afterStr.match(/-?\d[\d,]*\.?\d*/g);
   if (!numMatches) return null;
   const nums = numMatches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
-  if (nums.length < 6) return null;
+  if (nums.length < 3) return null;
 
-  const shares = nums[0];
+  const shares = Math.abs(nums[0]);
   if (shares <= 0) return null;
 
-  // 智能偵測：掃描所有位置，找「均價 ≈ 付出成本 / 庫存」的配對
-  // 支援多種券商格式：
-  //   A. 庫存[0] 付出成本[1] 均價[2] 融資金額(0)[3] 現價[4] 擔保品(0)[5] 市值[6] 損益[7] ...
-  //      （你的格式：均價在2、現價在4）
-  //   B. 庫存[0] 昨餘[1] 市值[2] 付出成本[3] 均價[4] 現價[5] ...
-  //   C. 庫存[0] 昨餘[1] 市值[2] 今買[3] 今賣[4] 付出成本[5] 均價[6] 現價[7] ...
   let cost = 0, price = 0;
-
-  // 步驟1：找 costIdx（均價位置）— nums[i] ≈ nums[i-1] / shares
   let costIdx = -1;
+
+  // 方法1：均價在「付出成本」之後（國票格式）
+  //   nums[i-1] ≈ nums[i] × 庫存
   for (let i = 1; i < nums.length; i++) {
     if (nums[i] <= 0 || nums[i-1] <= 0) continue;
-    // 容忍：均價通常在 1~10000 之間；付出成本 > 均價 * 0.8
     if (nums[i-1] >= nums[i] * shares * 0.9 && nums[i-1] <= nums[i] * shares * 1.1
         && Math.abs(nums[i] - nums[i-1] / shares) < Math.max(1, nums[i] * 0.01)) {
       costIdx = i;
@@ -2400,17 +2400,31 @@ function parseSpaceRow(line) {
     }
   }
 
+  // 方法2：均價在「總成本」之前（名稱(代號)格式）
+  //   nums[i] × 庫存 ≈ 後面某個 nums[j]
+  if (costIdx === -1) {
+    for (let i = 1; i < nums.length - 1; i++) {
+      if (nums[i] <= 0) continue;
+      const product = nums[i] * shares;
+      if (product <= 0) continue;
+      for (let j = i + 1; j < Math.min(i + 5, nums.length); j++) {
+        if (nums[j] <= 0) continue;
+        if (Math.abs(nums[j] - product) / product < 0.01) {
+          costIdx = i;
+          break;
+        }
+      }
+      if (costIdx > 0) break;
+    }
+  }
+
   if (costIdx === -1) return null;
   cost = nums[costIdx];
 
-  // 步驟2：找 priceIdx（現價）— costIdx 之後，第一個與 cost 同數量級的正數
-  // 跳過中間的 0（融資金額、擔保品等可能為 0）
+  // 找現價：costIdx 之後，第一個與 cost 同數量級的正數
   for (let i = costIdx + 1; i < nums.length; i++) {
     if (nums[i] <= 0) continue;
-    // 現價通常與均價同數量級（0.1x ~ 10x）
     if (nums[i] >= cost * 0.1 && nums[i] <= cost * 10) {
-      // 再確認：市值應該出現在現價之後，且 ≈ 現價 * 庫存
-      // 若下一個非零數 ≈ 現價*庫存，就更確定是現價
       price = nums[i];
       break;
     }
