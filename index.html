@@ -748,7 +748,10 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
 
     <div class="section add-panel" style="margin-bottom:20px;">
-      <div class="section-header"><span class="section-title">📋 匯入券商資料（一鍵更新）</span></div>
+      <div class="section-header">
+        <span class="section-title">📋 匯入券商資料（一鍵更新）</span>
+        <button class="btn" onclick="resetAllManualValues()" style="font-size:11px;padding:4px 10px;color:var(--text-dim);">🔄 重設所有手動值</button>
+      </div>
       <div class="section-body">
         <!-- 方式切換 -->
         <div style="display:flex;gap:8px;margin-bottom:12px;">
@@ -2268,6 +2271,24 @@ function clearPortfolioForm() {
   ['p_ticker','p_name','p_shares','p_cost','p_price'].forEach(id => document.getElementById(id).value = '');
 }
 
+/* 一鍵重設所有持倉的手動值（付出成本/預估收入/目前市值），讓它們重新用公式計算 */
+function resetAllManualValues() {
+  if (!state.holdings || state.holdings.length === 0) { toast('沒有持倉可重設'); return; }
+  if (!confirm('確定要清除所有持倉的「手動鎖定值」嗎？\n\n付出成本、預估收入、目前市值會改用 股數×均價/現價 自動計算。')) return;
+  let count = 0;
+  state.holdings.forEach(h => {
+    if (h.manualCost != null || h.manualEst != null || h.manualMarket != null ||
+        h.costLocked || h.marketLocked) count++;
+    h.manualCost = null;
+    h.manualEst = null;
+    h.manualMarket = null;
+    h.costLocked = false;
+    h.marketLocked = false;
+  });
+  save(); renderPortfolio();
+  toast(`✓ 已重設 ${count} 筆持倉的手動值`);
+}
+
 /* ── 券商資料貼上解析（支援 tab 分隔 + OCR 空格分隔） ── */
 function parseBrokerData() {
   const raw = document.getElementById('brokerPaste').value.trim();
@@ -2460,14 +2481,12 @@ function applyBrokerRow(r) {
     existing.price = r.price;
     // 只在從網站直接複製（文字乾淨）時才更新名稱，OCR 名稱可能有錯不覆蓋
     if (r.nameClean) existing.name = r.name;
-    // 使用券商精確付出成本（若有抓到）— 避免 均價×庫存 掉精度
-    if (!existing.costLocked) {
-      existing.manualCost = r.totalCost > 0 ? r.totalCost : null;
-    }
-    // 市值清空，使用 shares × price
-    if (!existing.marketLocked) existing.manualMarket = null;
-    // 預估收入：券商有給就用券商的（含手續費），沒有則清空同步市值
+    // 匯入時強制重設所有手動值（忽略鎖定），以券商數值為主
+    existing.manualCost = r.totalCost > 0 ? r.totalCost : null;
+    existing.manualMarket = null; // 市值 = shares × price（自動）
     existing.manualEst = r.estIncome > 0 ? r.estIncome : null;
+    existing.costLocked = false;
+    existing.marketLocked = false;
     return true; // updated
   }
   state.holdings.push({
