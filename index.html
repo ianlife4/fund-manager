@@ -2727,8 +2727,9 @@ function updateManualMarket(id, val) {
   const n = parseFloat(val);
   if (isNaN(n)) return;
   h.manualMarket = n;
-  // 若預估收入沒有手動值，同步更新
-  if (h.manualEst == null) { /* 讓 displayEst 自動跟 displayMarket */ }
+  // 同步：修改市值時，清空預估收入讓它跟著新市值
+  // （若要設不同於市值的預估收入，改完市值再單獨編輯預估收入即可）
+  h.manualEst = null;
   save(); renderPortfolio();
 }
 function updateManualEst(id, val) {
