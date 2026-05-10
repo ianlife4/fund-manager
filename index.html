@@ -1549,7 +1549,8 @@ function totalMarketValue() {
   return state.holdings.reduce((s, h) => {
     // 可轉債：price 存未實現損益，市值 = 成本 + 未實現
     if (h.tradeType === '可轉債') return s + (h.cost || 0) + (h.price || 0);
-    return s + h.shares * h.price;
+    // 一般：優先用 manualEst（手動估值，與 unrealizedPnL 邏輯同步），否則 shares × price
+    return s + (h.manualEst != null ? h.manualEst : h.shares * h.price);
   }, 0);
 }
 function totalCost() {
