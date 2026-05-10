@@ -1592,8 +1592,16 @@ function totalRealizedPnL() {
 }
 // 現金餘額 = 淨投入資金 - 目前付出成本（花出去買股票的錢）
 function cashBalance() { return netDeposited() - totalCost(); }
-// 基金總市值 = 持倉市值 + 現金餘額
-function fundTotalNav() { return totalMarketValue() + cashBalance(); }
+// 融資借款總額（負債）：融資部位的全額 - 自付額 = 全額 × marginRate
+function marginLoanTotal() {
+  return state.holdings.reduce((s, h) => {
+    if (h.tradeType !== '融資') return s;
+    const totalAmt = h.shares * h.cost;
+    return s + Math.round(totalAmt * (h.marginRate || 0.6));
+  }, 0);
+}
+// 基金總市值 = 持倉市值 + 現金餘額 - 融資借款（券商欠款是負債，不能算進淨值）
+function fundTotalNav() { return totalMarketValue() + cashBalance() - marginLoanTotal(); }
 
 const DEFAULT_COLORS = [
   '#ef5350','#c9a84c','#66bb6a','#5c6bc0','#ff7043',
@@ -3117,15 +3125,9 @@ function renderPerformance() {
   const realizedCFs = cfEvents.filter(c => c.type === '已實現');
   const totalRealized = realizedCFs.reduce((s,c) => s+c.amount, 0);
 
-  // ── 未實現損益（持倉明細加總：預估收入 − 付出成本）
-  const unrealizedPnL = state.holdings.reduce((s, h) => {
-    if (h.tradeType === '可轉債') return s + (h.price || 0); // CB: price 就是未實現損益
-    const totalAmt = h.shares * h.cost;
-    const displayCostH = h.manualCost != null ? h.manualCost
-      : (h.tradeType==='融資' ? Math.round(totalAmt*(1-(h.marginRate||0.6))) : totalAmt);
-    const displayEstH = h.manualEst != null ? h.manualEst : h.shares * h.price;
-    return s + (displayEstH - displayCostH);
-  }, 0);
+  // ── 未實現損益：直接用 totalPnL() = 持倉市值 − 全額成本，
+  // 與「總覽頁 預估損益」、「持倉頁 損益合計」同源，融資正確扣借款
+  const unrealizedPnL = totalPnL();
 
   // ── 淨投入資金（入金+已實現−出金）
   const netDep = netDeposited();
