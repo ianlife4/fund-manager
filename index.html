@@ -3213,24 +3213,13 @@ function renderPerformance() {
     // 黃線：確定淨值序列
     const confirmedData = buildConfirmed(data);
 
-    // 在最右側追加一個 phantom「今日」欄位，讓黃線清楚停在最後一筆紀錄日，
-    // 藍色虛線則從黃線終點直接斜拉到 phantom 點（黃線值＋未實現），不再「借用」倒數第二點。
+    // 藍色虛線：倒數第二點跟黃線同高，最後一點加上未實現損益（原始設計）
     const lastIdx = confirmedData.length - 1;
-    const lastConfirmedNav = lastIdx >= 0 ? confirmedData[lastIdx] : 0;
-    const showUnrealExt = lastIdx >= 0 && Math.abs(unrealizedPnL) > 0.5;
-
-    const yellowData = showUnrealExt ? [...confirmedData, null] : confirmedData;
-    const topData = showUnrealExt
-      ? yellowData.map((_, i) => {
-          if (i === lastIdx) return lastConfirmedNav;                       // 與黃線終點重疊
-          if (i === lastIdx + 1) return lastConfirmedNav + unrealizedPnL;   // phantom：含未實現
-          return null;
-        })
-      : yellowData.map(() => null);
-
-    const chartLabels = showUnrealExt
-      ? [...data.map(s => s.date), '今日']
-      : data.map(s => s.date);
+    const topData = confirmedData.map((v, i) => {
+      if (i === lastIdx - 1) return v; // 倒數第二點與黃線同高
+      if (i === lastIdx) return v + unrealizedPnL; // 最後一點往上偏移
+      return null; // 其餘不顯示
+    });
 
     const gradConfirmed = ctx1.createLinearGradient(0,0,0,320);
     gradConfirmed.addColorStop(0, navColor + '22');
@@ -3241,11 +3230,11 @@ function renderPerformance() {
     navChartInstance = new Chart(ctx1, {
       type: 'line',
       data: {
-        labels: chartLabels,
+        labels: data.map(s=>s.date),
         datasets: [
           {
             label: '已確定淨值（入金＋已實現）',
-            data: yellowData,
+            data: confirmedData,
             borderColor: navColor,
             backgroundColor: gradConfirmed,
             borderWidth: 2.5,
