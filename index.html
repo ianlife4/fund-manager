@@ -1416,10 +1416,86 @@ function setSyncStatus(s) {
   else                     { el.textContent = '⏳ 連線中...'; el.style.color = 'var(--text-dim)'; }
 }
 
+// ════════════════════════════════════════════
+// 帳戶間單向同步：強強滾 → ian
+// 規則：
+//   - 強強滾的 holdings 推到 ian,在 ian 端標 syncedFromMaster: true
+//   - ian 端的 holdings 若沒有 syncedFromMaster 旗標,視為 ian 自己的,永遠不被動
+//   - 同 ticker+tradeType 已存在 ian (無旗標) → 跳過 (例:康普 47394)
+//   - 強強滾刪一檔 → ian 上對應 syncedFromMaster 那筆也跟著刪
+//   - ian 端修改不會推回強強滾 (單向)
+// ════════════════════════════════════════════
+const SYNC_MASTER_NAME = '強強滾';
+const SYNC_SLAVE_NAME = 'ian';
+let _isSyncing = false;
+
+function _holdingKey(h) {
+  return `${(h.ticker || '').trim()}::${h.tradeType || ''}`;
+}
+
+function syncMasterToSlave() {
+  if (_isSyncing) return false;
+  const master = accounts.find(a => a.name === SYNC_MASTER_NAME);
+  const slave = accounts.find(a => a.name === SYNC_SLAVE_NAME);
+  if (!master || !slave || master.id === slave.id) return false;
+
+  _isSyncing = true;
+  try {
+    if (!slave.holdings) slave.holdings = [];
+    const masterHoldings = master.holdings || [];
+
+    const snapshotBefore = JSON.stringify(slave.holdings);
+
+    const slaveByKey = new Map();
+    slave.holdings.forEach(h => slaveByKey.set(_holdingKey(h), h));
+    const masterKeys = new Set(masterHoldings.map(_holdingKey));
+
+    masterHoldings.forEach(mh => {
+      const key = _holdingKey(mh);
+      const sh = slaveByKey.get(key);
+      if (sh) {
+        if (sh.syncedFromMaster) {
+          const id = sh.id;
+          Object.keys(sh).forEach(k => { if (k !== 'id') delete sh[k]; });
+          Object.assign(sh, JSON.parse(JSON.stringify(mh)), { id, syncedFromMaster: true });
+        }
+      } else {
+        const cloned = JSON.parse(JSON.stringify(mh));
+        cloned.id = Date.now().toString() + Math.random().toString(36).slice(2,6);
+        cloned.syncedFromMaster = true;
+        slave.holdings.push(cloned);
+      }
+    });
+
+    slave.holdings = slave.holdings.filter(sh => {
+      if (!sh.syncedFromMaster) return true;
+      return masterKeys.has(_holdingKey(sh));
+    });
+
+    // 若當前正顯示 ian 帳戶,state 是它的 reference,直接更新 state
+    if (state && currentAccountId === slave.id) {
+      state.holdings = slave.holdings;
+    }
+
+    return JSON.stringify(slave.holdings) !== snapshotBefore;
+  } finally {
+    _isSyncing = false;
+  }
+}
+
 function saveAllAccounts() {
   // 把當前 state 同步回 accounts 陣列
   const idx = accounts.findIndex(a => a.id === currentAccountId);
   if (idx >= 0) accounts[idx] = { ...state, id: currentAccountId, name: accounts[idx].name };
+
+  // 若當前帳戶是強強滾,自動同步至 ian
+  if (!_isSyncing) {
+    const cur = accounts[idx];
+    if (cur && cur.name === SYNC_MASTER_NAME) {
+      syncMasterToSlave();
+    }
+  }
+
   // currentAccountId 存本地，不上傳 Firebase
   localStorage.setItem('fundMgr_currentAcct', currentAccountId);
   const payload = { accounts, globalSettings };
@@ -1498,8 +1574,11 @@ async function loadFromFirebase() {
           }
           state = getCurrentAccount() || accounts[0];
         }
+        // 載入完成後跑一次強強滾 → ian 同步,確保兩邊一致
+        const changed = syncMasterToSlave();
         localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
         refreshAllViews();
+        if (changed) saveAllAccounts();
       }
     }
     setSyncStatus('ok');
@@ -1515,8 +1594,11 @@ async function loadFromFirebase() {
             currentAccountId = accounts[0]?.id;
           }
           state = getCurrentAccount() || accounts[0];
+          // 收到遠端更新後也跑一次強強滾 → ian 同步 (若 remote 端是舊版沒同步邏輯,在這邊補正)
+          const changed = syncMasterToSlave();
           localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
           refreshAllViews();
+          if (changed) saveAllAccounts();
           setSyncStatus('ok');
         }
       } catch(e) {}
