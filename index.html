@@ -36,6 +36,7 @@
 // ════════════════════════════════════════════
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA9fZfRwFQjSN1CHc_PKyg6Hhvh1NT1Bk8",
@@ -49,6 +50,7 @@ const firebaseConfig = {
 
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
 const DOC_REF = doc(db, 'fund', 'main');
 
 // 掛到 window 讓後面的 script 能用
@@ -57,6 +59,10 @@ window._docRef = DOC_REF;
 window._setDoc = setDoc;
 window._onSnapshot = onSnapshot;
 window._getDoc = getDoc;
+window._auth = auth;
+window._signIn = signInWithEmailAndPassword;
+window._signOut = signOut;
+window._onAuthStateChanged = onAuthStateChanged;
 window._firebaseReady = true;
 
 // 初始化 Firebase 連線後觸發 app init
@@ -596,8 +602,11 @@ document.addEventListener('DOMContentLoaded', () => {
   <div style="width:360px;padding:48px 40px;background:var(--surface);border:1px solid var(--border);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,0.6);text-align:center;">
     <div style="width:52px;height:52px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:26px;color:#0a0c10;font-weight:700;margin:0 auto 20px;">F</div>
     <div style="font-family:var(--serif);font-size:22px;color:var(--gold);margin-bottom:4px;">Ianker 績效紀錄</div>
-    <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:36px;">Portfolio Manager</div>
-    <input id="loginPwd" type="password" placeholder="請輸入密碼"
+    <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:28px;">Portfolio Manager</div>
+    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username"
+      onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()"
+      style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.05em;" />
+    <input id="loginPwd" type="password" placeholder="密碼" autocomplete="current-password"
       onkeydown="if(event.key==='Enter')attemptLogin()"
       style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.1em;" />
     <button onclick="attemptLogin()"
@@ -613,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.04.20-cb18</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.05.31-auth1</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -623,6 +632,10 @@ document.addEventListener('DOMContentLoaded', () => {
       🔒 唯讀
     </button>
     <div id="syncStatus" style="font-size:11px;padding:4px 10px;border-radius:20px;font-family:var(--mono);background:var(--surface2);color:var(--text-dim)">⏳ 連線中...</div>
+    <button id="logoutBtn" onclick="doLogout()"
+      style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;transition:all 0.2s">
+      登出
+    </button>
   </div>
 </header>
 
@@ -1406,13 +1419,21 @@ function renderAccountBar() {
 // STORAGE — Firebase 雲端同步（多帳戶）
 // ════════════════════════════════════════════
 let _saveTimer = null;
+let _lastSyncErr = '';
 
 function setSyncStatus(s) {
   const el = document.getElementById('syncStatus');
   if (!el) return;
+  el.title = ''; el.style.cursor = '';
   if (s === 'ok')      { el.textContent = '☁ 已同步'; el.style.color = 'var(--down)'; }
   else if (s === 'saving') { el.textContent = '↑ 儲存中...'; el.style.color = 'var(--gold)'; }
-  else if (s === 'err')    { el.textContent = '✗ 同步失敗'; el.style.color = 'var(--up)'; }
+  else if (s === 'err')    {
+    const hint = /permission|denied|insufficient/i.test(_lastSyncErr) ? '（權限/規則被擋）' : '';
+    el.textContent = '✗ 同步失敗' + hint;
+    el.style.color = 'var(--up)';
+    el.title = _lastSyncErr || '按 F12 看 Console 錯誤';
+    el.style.cursor = 'help';
+  }
   else                     { el.textContent = '⏳ 連線中...'; el.style.color = 'var(--text-dim)'; }
 }
 
@@ -1508,7 +1529,11 @@ function saveAllAccounts() {
         await window._setDoc(window._docRef, { data: JSON.stringify(payload), updatedAt: Date.now() });
         setSyncStatus('ok');
       }
-    } catch(e) { setSyncStatus('err'); }
+    } catch(e) {
+      _lastSyncErr = (e && (e.code || e.message)) ? `${e.code || ''} ${e.message || ''}`.trim() : String(e);
+      console.error('[Firebase 寫入失敗]', _lastSyncErr, e);
+      setSyncStatus('err');
+    }
   }, 1000);
 }
 
@@ -1602,8 +1627,16 @@ async function loadFromFirebase() {
           setSyncStatus('ok');
         }
       } catch(e) {}
+    }, (err) => {
+      _lastSyncErr = (err && (err.code || err.message)) ? `${err.code || ''} ${err.message || ''}`.trim() : String(err);
+      console.error('[Firebase 監聽失敗]', _lastSyncErr, err);
+      setSyncStatus('err');
     });
-  } catch(e) { setSyncStatus('err'); }
+  } catch(e) {
+    _lastSyncErr = (e && (e.code || e.message)) ? `${e.code || ''} ${e.message || ''}`.trim() : String(e);
+    console.error('[Firebase 讀取失敗]', _lastSyncErr, e);
+    setSyncStatus('err');
+  }
 }
 
 function refreshAllViews() {
@@ -2546,11 +2579,52 @@ function parseTabRow(cols) {
   else if (rawType.includes('期貨')) tradeType = '期貨';
 
   const shares = parseFloat(cols[2].replace(/,/g, ''));
+
+  // 融資：欄位順序特殊，從數字欄位用專用錨點解析（避免抓到市值/獲利率）
+  if (tradeType === '融資' && !isNaN(shares)) {
+    const arr = (cols.slice(2).join(' ').match(/-?\d[\d,]*\.?\d*/g) || [])
+      .map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+    const m = parseMarginRow(arr, Math.abs(shares));
+    if (m) return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares: Math.abs(shares), cost: m.cost, price: m.price, totalCost: 0, estIncome: m.est, nameClean: true };
+  }
+
   const cost = parseFloat(cols[8].replace(/,/g, ''));
   const price = parseFloat(cols[9].replace(/,/g, ''));
   if (isNaN(shares) || isNaN(cost) || isNaN(price)) return null;
 
   return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares, cost, price, nameClean: true };
+}
+
+/* 融資/券「未實現損益」畫面專用：用「現價×股數 = 股票市值」當錨點，
+   再往前抓成本均價，股票市值之後第一個數當損益試算。
+   解決券商「付出成本」欄位是自備款(40%)、舊解析會把現價當成本、把獲利率%當現價的問題 */
+function parseMarginRow(nums, shares) {
+  let priceIdx = -1, marketIdx = -1, price = 0, marketValue = 0;
+  for (let i = 1; i < nums.length; i++) {
+    const p = nums[i];
+    if (p <= 0) continue;
+    for (let j = i + 1; j < nums.length; j++) {
+      const M = nums[j];
+      if (M > 0 && Math.abs(M - p * shares) / (p * shares) < 0.02 && M > marketValue) {
+        marketValue = M; price = p; priceIdx = i; marketIdx = j;
+      }
+    }
+  }
+  if (priceIdx === -1) return null;
+  // 成本均價：現價之前、同數量級的單價（跳過融資金額/付出成本等大數）
+  let cost = 0;
+  for (let i = priceIdx - 1; i >= 1; i--) {
+    if (nums[i] >= price * 0.1 && nums[i] <= price * 10) { cost = nums[i]; break; }
+  }
+  if (cost <= 0) return null;
+  // 損益試算：股票市值之後第一個數 → 讓 App 損益含融資利息、對齊券商
+  let est = 0;
+  const pnl = (marketIdx + 1 < nums.length) ? nums[marketIdx + 1] : NaN;
+  if (!isNaN(pnl) && Math.abs(pnl) < marketValue * 0.8) {
+    const full = cost * shares;
+    if (full + pnl > 0) est = Math.round(full + pnl);
+  }
+  return { cost, price, est };
 }
 
 /* 空格 / OCR 分隔解析 */
@@ -2595,6 +2669,13 @@ function parseSpaceRow(line) {
 
   const shares = Math.abs(nums[0]);
   if (shares <= 0) return null;
+
+  // ── 融資：未實現損益畫面欄位順序與現股不同，改用專用錨點解析 ──
+  if (tradeType === '融資') {
+    const m = parseMarginRow(nums, shares);
+    if (m) return { tradeType, ticker, name, shares, cost: m.cost, price: m.price, totalCost: 0, estIncome: m.est, nameClean: false };
+    // 解析不到就 fall through 用通用邏輯（至少不比現在差）
+  }
 
   let cost = 0, price = 0, totalCost = 0, priceIdx = -1;
   let costIdx = -1;
@@ -2671,7 +2752,7 @@ function applyBrokerRow(r) {
     // 只在從網站直接複製（文字乾淨）時才更新名稱，OCR 名稱可能有錯不覆蓋
     if (r.nameClean) existing.name = r.name;
     // 匯入時強制重設所有手動值（忽略鎖定），以券商數值為主
-    existing.manualCost = r.totalCost > 0 ? r.totalCost : null;
+    existing.manualCost = (r.tradeType === '融資') ? null : (r.totalCost > 0 ? r.totalCost : null);
     existing.manualMarket = null; // 市值 = shares × price（自動）
     existing.manualEst = r.estIncome > 0 ? r.estIncome : null;
     existing.costLocked = false;
@@ -2685,7 +2766,7 @@ function applyBrokerRow(r) {
     sector: '其他', feeDiscount: 6,
     marginRate: r.tradeType === '融資' ? 0.6 : null,
     marginDays: 0, futuresFee: r.tradeType === '期貨' ? 60 : 0,
-    manualCost: r.totalCost > 0 ? r.totalCost : null,
+    manualCost: (r.tradeType === '融資') ? null : (r.totalCost > 0 ? r.totalCost : null),
     manualMarket: null,
     manualEst: r.estIncome > 0 ? r.estIncome : null,
     costLocked: false, marketLocked: false,
@@ -4419,70 +4500,75 @@ function initReadonly() {
 // ════════════════════════════════════════════
 // LOGIN
 // ════════════════════════════════════════════
-function attemptLogin() {
-  const pwd = document.getElementById('loginPwd').value.trim();
+async function attemptLogin() {
+  const email = (document.getElementById('loginEmail').value || '').trim();
+  const pwd = document.getElementById('loginPwd').value || '';
   const errEl = document.getElementById('loginError');
-  if (!pwd) return;
+  if (!email || !pwd) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入 Email 和密碼'; return; }
+  if (!window._auth || !window._signIn) { errEl.style.color = 'var(--red)'; errEl.textContent = '連線尚未就緒，請稍候再試'; return; }
+  errEl.style.color = 'var(--text-dim)';
+  errEl.textContent = '登入中…';
+  try {
+    await window._signIn(window._auth, email, pwd);
+    // 成功 → onAuthStateChanged 會接手載入資料
+  } catch (e) {
+    const code = e?.code || '';
+    errEl.style.color = 'var(--red)';
+    errEl.textContent = /wrong-password|invalid-credential|user-not-found|invalid-email/i.test(code)
+      ? 'Email 或密碼錯誤' : ('登入失敗：' + (code || e));
+    document.getElementById('loginPwd').value = '';
+    document.getElementById('loginPwd').focus();
+  }
+}
 
-  if (pwd === 'nini7520') {
-    loginState = { type: 'owner' };
-    document.body.classList.remove('readonly');
-    document.getElementById('readonlyBtn').textContent = '✏️ 編輯中';
-    hideLoginOverlay();
-    autoSnapshotAllAccounts(); // 自動為所有帳戶建立/更新今日快照
-    refreshAllViews();
-    return;
-  }
-  if (pwd === globalSettings.masterPassword) {
-    loginState = { type: 'master' };
-    hideLoginOverlay();
-    autoSnapshotAllAccounts(); // 自動為所有帳戶建立/更新今日快照
-    refreshAllViews();
-    return;
-  }
-  if (globalSettings.visitorPassword && pwd === globalSettings.visitorPassword) {
-    const visAcct = (globalSettings.visitorAccountId && accounts.find(a => a.id === globalSettings.visitorAccountId))
-      || accounts[0];
-    loginState = { type: 'visitor', accountId: visAcct?.id };
-    if (visAcct) { currentAccountId = visAcct.id; state = visAcct; }
-    document.body.classList.add('visitor-mode');
-    hideLoginOverlay();
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('page-performance')?.classList.add('active');
-    document.querySelector('.tab.visitor-tab')?.classList.add('active');
-    renderPage('performance');
-    renderAccountBar();
-    return;
-  }
-  const acct = accounts.find(a => a.viewPassword === pwd);
-  if (acct) {
-    loginState = { type: 'tab', accountId: acct.id };
-    currentAccountId = acct.id;
-    state = acct;
-    hideLoginOverlay();
-    refreshAllViews();
-    return;
-  }
-  errEl.textContent = '密碼錯誤，請再試一次';
-  document.getElementById('loginPwd').value = '';
-  document.getElementById('loginPwd').focus();
+async function doLogout() {
+  try { if (window._signOut && window._auth) await window._signOut(window._auth); } catch(e) {}
+  loginState = null;
+  location.reload();
 }
 
 function hideLoginOverlay() {
   document.getElementById('loginOverlay').style.display = 'none';
 }
+function showLoginOverlay() {
+  loginState = null;
+  const ov = document.getElementById('loginOverlay');
+  if (ov) ov.style.display = 'flex';
+  document.getElementById('loginEmail')?.focus();
+}
 
+// 登入成功（含重整後 session 自動恢復）後才載入雲端資料
+let _loadedOnce = false;
+async function onLoggedIn() {
+  loginState = { type: 'owner' };
+  document.body.classList.remove('readonly');
+  const rb = document.getElementById('readonlyBtn'); if (rb) rb.textContent = '✏️ 編輯中';
+  hideLoginOverlay();
+  if (!_loadedOnce) {
+    _loadedOnce = true;
+    await loadFromFirebase();        // 規則鎖 UID，未登入會被擋
+    autoSnapshotAllAccounts();
+  }
+  refreshAllViews();
+}
+
+let _appInited = false;
 function initApp() {
+  if (_appInited) return;
+  _appInited = true;
   load();
   document.getElementById('headerDate').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   document.getElementById('cf_date').value = new Date().toISOString().slice(0,10);
   initReadonly();
-  // 載入 Firebase 資料但不渲染（loginState 尚未設定）
-  setTimeout(() => loadFromFirebase(), 500);
-  // 顯示登入畫面
-  document.getElementById('loginOverlay').style.display = 'flex';
-  document.getElementById('loginPwd').focus();
+  waitForAuth();
+}
+function waitForAuth() {
+  if (!window._auth || !window._onAuthStateChanged) { setTimeout(waitForAuth, 150); return; }
+  // Firebase 會記住登入狀態：有 user 直接載入，沒有則顯示登入框
+  window._onAuthStateChanged(window._auth, (user) => {
+    if (user) onLoggedIn();
+    else showLoginOverlay();
+  });
 }
 window.initApp = initApp;
 
