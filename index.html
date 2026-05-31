@@ -622,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.05.31-auth2</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.05.31-bak1</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -1258,6 +1258,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="section">
       <div class="section-header"><span class="section-title">資料管理</span></div>
       <div class="section-body" style="display:flex;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-outline" onclick="downloadFullBackup('')">💾 立即備份全部帳戶</button>
         <button class="btn btn-outline" onclick="exportData()">📤 匯出 JSON</button>
         <button class="btn btn-outline" onclick="importData()">📥 匯入 JSON</button>
         <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(event)" />
@@ -4543,6 +4544,36 @@ function showLoginOverlay() {
 
 // 登入成功（含重整後 session 自動恢復）後才載入雲端資料
 let _loadedOnce = false;
+// 下載完整備份（全部帳戶）+ 本機滾動備份（獨立 key，主資料被蓋也還在）
+function downloadFullBackup(reason) {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const payload = JSON.stringify({ accounts, currentAccountId, globalSettings, _ts: Date.now(), _backupAt: now.toISOString() });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+  a.download = 'fund_backup_' + today + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  let bak = [];
+  try { bak = JSON.parse(localStorage.getItem('fundMgr_weeklyBak') || '[]'); } catch (e) {}
+  bak.push({ date: today, data: payload });
+  bak = bak.slice(-4);
+  try { localStorage.setItem('fundMgr_weeklyBak', JSON.stringify(bak)); } catch (e) {}
+  if (window.toast) toast((reason || '') + '已下載完整備份 ✓');
+}
+
+// 每週自動備份：週日、或距上次 >=7 天就觸發（即使雲端斷線，檔案也保得住）
+function weeklyAutoBackup() {
+  try {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const last = localStorage.getItem('fundMgr_lastBackup') || '';
+    const days = last ? (now - new Date(last)) / 86400000 : 999;
+    if (!(days >= 7 || (now.getDay() === 0 && last !== today))) return;
+    downloadFullBackup('每週自動備份：');
+    localStorage.setItem('fundMgr_lastBackup', today);
+  } catch (e) { console.error('weeklyAutoBackup', e); }
+}
+
 async function onLoggedIn() {
   loginState = { type: 'owner' };
   document.body.classList.remove('readonly');
