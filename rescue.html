@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>資料救援 (唯讀)</title>
+<style>
+  body { background:#0a0c10; color:#e8eaf0; font-family:-apple-system,"Noto Sans TC",sans-serif; margin:0; padding:16px; line-height:1.6; }
+  h1 { color:#c9a84c; font-size:18px; margin:0 0 4px; }
+  .sub { color:#7a8099; font-size:12px; margin-bottom:16px; }
+  .card { background:#111318; border:1px solid #252933; border-radius:10px; padding:14px; margin-bottom:14px; }
+  .ok { color:#3ecf8e; } .warn { color:#f26e6e; } .gold { color:#c9a84c; }
+  button { width:100%; padding:14px; border:none; border-radius:10px; font-size:16px; font-weight:700; cursor:pointer; margin-bottom:10px; }
+  .b-gold { background:#c9a84c; color:#0a0c10; }
+  .b-out { background:transparent; color:#c9a84c; border:1px solid #8a6e2f; }
+  textarea { width:100%; height:160px; background:#191c24; color:#e8eaf0; border:1px solid #252933; border-radius:8px; font-family:monospace; font-size:11px; padding:8px; box-sizing:border-box; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td { padding:4px 6px; border-bottom:1px solid #252933; }
+  td:last-child { text-align:right; color:#c9a84c; font-family:monospace; }
+  .big { font-size:15px; }
+</style>
+</head>
+<body>
+<h1>🛟 資料救援頁（唯讀・不連雲端）</h1>
+<div class="sub">這個頁面只讀取本機資料、不會連 Firebase、不會覆蓋任何東西。</div>
+
+<div class="card" id="summary">讀取中…</div>
+
+<button class="b-gold" onclick="dl()">💾 下載備份檔 (fund_rescue.json)</button>
+<button class="b-out" onclick="cp()">📋 複製全部 JSON</button>
+
+<div class="card">
+  <div class="sub">下方是完整資料（可長按全選複製，傳給我）：</div>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<script>
+// 純讀取 localStorage，組合所有 fundMgr 相關 key
+function collect() {
+  const keys = ['fundMgr_v3','fundMgr_weeklyBak','fundMgr_v3_BACKUP_premigrate','fundMgr_v3_FIXED','fundMgr_currentAcct'];
+  const bundle = { _rescuedAt: new Date().toISOString(), _href: location.href };
+  keys.forEach(k => { const v = localStorage.getItem(k); if (v != null) bundle[k] = v; });
+  // 也把所有 key 列出來，避免漏
+  bundle._allKeys = Object.keys(localStorage);
+  return bundle;
+}
+
+function summarize(bundle) {
+  let html = '';
+  let main = null;
+  try { main = JSON.parse(bundle.fundMgr_v3 || 'null'); } catch(e){}
+  if (!main || !main.accounts) {
+    html = '<div class="warn big">⚠️ 這台沒有讀到主資料 (fundMgr_v3)</div><div class="sub">可能不是用這台 key 的，或瀏覽器清過。但還是把下面的內容下載／複製給我看看。</div>';
+  } else {
+    let maxSnaps = 0, allDates = [];
+    html = '<div class="ok big">✓ 有讀到資料！</div><table>';
+    main.accounts.forEach(a => {
+      const sn = (a.snapshots||[]).length;
+      if (sn > maxSnaps) maxSnaps = sn;
+      (a.snapshots||[]).forEach(s => allDates.push(s.date));
+      html += '<tr><td>'+ (a.name||'?') +'</td><td>持倉 '+ (a.holdings||[]).length +' ・ 快照 '+ sn +' ・ 出入金 '+ (a.cashflows||[]).length +'</td></tr>';
+    });
+    html += '</table>';
+    const has5月 = allDates.some(d => d && d >= '2026-05-01');
+    const latest = allDates.sort().slice(-1)[0] || '無';
+    html += '<div class="sub" style="margin-top:10px">最多快照數：<b class="gold">'+ maxSnaps +'</b> 筆 ・ 最新快照：<b class="gold">'+ latest +'</b></div>';
+    if (maxSnaps >= 15) html += '<div class="ok big" style="margin-top:8px">🎉 這台有「完整版」！快下載傳給我！</div>';
+    else if (has5月) html += '<div class="ok" style="margin-top:8px">有 5 月的快照，比目前雲端新，值得救！</div>';
+    else html += '<div class="warn" style="margin-top:8px">看起來也是舊版（沒有 5 月快照）。還是下載給我確認。</div>';
+  }
+  return html;
+}
+
+const bundle = collect();
+document.getElementById('summary').innerHTML = summarize(bundle);
+const json = JSON.stringify(bundle, null, 2);
+document.getElementById('out').value = json;
+
+function dl() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], {type:'application/json'}));
+  a.download = 'fund_rescue_' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function cp() {
+  const t = document.getElementById('out');
+  t.select(); t.setSelectionRange(0, 999999);
+  try { document.execCommand('copy'); } catch(e){}
+  navigator.clipboard && navigator.clipboard.writeText(json).catch(()=>{});
+  alert('已複製，可貼給對方');
+}
+</script>
+</body>
+</html>
