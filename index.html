@@ -622,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="logo-mark">F</div>
     <div>
       <div class="fund-title" id="fundNameDisplay">我的基金</div>
-      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.05.31-auth1</span></div>
+      <div class="fund-subtitle">Portfolio Manager <span id="buildVer" style="color:var(--gold);font-size:10px;margin-left:6px;">v2026.05.31-auth2</span></div>
     </div>
   </div>
   <div class="header-date" id="headerDate"></div>
@@ -1520,7 +1520,7 @@ function saveAllAccounts() {
   // currentAccountId 存本地，不上傳 Firebase
   localStorage.setItem('fundMgr_currentAcct', currentAccountId);
   const payload = { accounts, globalSettings };
-  localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
+  localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings, _ts: Date.now() }));
   clearTimeout(_saveTimer);
   setSyncStatus('saving');
   _saveTimer = setTimeout(async () => {
@@ -1601,9 +1601,13 @@ async function loadFromFirebase() {
         }
         // 載入完成後跑一次強強滾 → ian 同步,確保兩邊一致
         const changed = syncMasterToSlave();
-        localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
+        localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings, _ts: remoteTime }));
         refreshAllViews();
         if (changed) saveAllAccounts();
+      } else {
+        // 本機較新（同步失敗/離線期間改的）→ 反推上雲端，不被舊雲端蓋掉而遺失
+        refreshAllViews();
+        saveAllAccounts();
       }
     }
     setSyncStatus('ok');
@@ -1621,7 +1625,7 @@ async function loadFromFirebase() {
           state = getCurrentAccount() || accounts[0];
           // 收到遠端更新後也跑一次強強滾 → ian 同步 (若 remote 端是舊版沒同步邏輯,在這邊補正)
           const changed = syncMasterToSlave();
-          localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings }));
+          localStorage.setItem('fundMgr_v3', JSON.stringify({ accounts, currentAccountId, globalSettings, _ts: snap.data().updatedAt || Date.now() }));
           refreshAllViews();
           if (changed) saveAllAccounts();
           setSyncStatus('ok');
