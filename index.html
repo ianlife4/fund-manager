@@ -1692,7 +1692,27 @@ function totalFullCost() {
     return s + h.shares * h.cost;
   }, 0);
 }
-function totalPnL() { return totalMarketValue() - totalFullCost(); }
+// 融資持有天數：由「建倉日（openDate）」自動推算 = 今天 − 建倉日（無建倉日則 0，不計利息）。
+// 只填一次建倉日，之後天數/利息每天自動累加，不用再手動維護。
+function marginDaysHeld(h) {
+  if (!h.openDate) return 0;
+  const t = Date.parse(h.openDate);
+  if (isNaN(t)) return 0;
+  const d = Math.floor((Date.now() - t) / 86400000);
+  return d > 0 ? d : 0;
+}
+// 融資未實現損益要扣的「平倉成本」：賣出手續費 + 證交稅 + 融資利息，讓 App 損益對齊券商「損益試算」。
+// 只在「預估收入」未手動鎖定（manualEst==null）時自動扣；
+// 若已從券商「未實現損益」匯入或手動鎖定預估收入，該值本身就是淨損益，回傳 0 不重複扣。
+function marginNetCost(h) {
+  if (h.tradeType !== '融資' || h.manualEst != null) return 0;
+  const market   = h.manualMarket != null ? h.manualMarket : h.shares * h.price;
+  const borrowed = Math.round(h.shares * h.cost * (h.marginRate || 0.6));
+  const disc     = h.feeDiscount || 6;
+  return calcStockFee(market, disc) + calcStockTax(market, false) + calcMarginInterest(borrowed, marginDaysHeld(h));
+}
+function totalMarginNetCost() { return state.holdings.reduce((s, h) => s + marginNetCost(h), 0); }
+function totalPnL() { return totalMarketValue() - totalFullCost() - totalMarginNetCost(); }
 function profitRate() {
   const c = totalCost();
   return c === 0 ? 0 : (totalPnL() / c) * 100;
@@ -2292,9 +2312,9 @@ function renderPortfolio() {
       // 預估收入：有 manualEst 就用（手動改後固定），否則 = 目前市值
       const displayIncome = h.manualEst != null ? h.manualEst : displayMarket;
 
-      // 損益 & 報酬率
+      // 損益 & 報酬率（融資未鎖定預估收入時，扣賣出手續費/證交稅/融資利息 → 淨損益，對齊券商）
       const pnlBase = isMargin ? totalAmt : displayCost;
-      const pnlDisplay = displayIncome - pnlBase;
+      const pnlDisplay = displayIncome - pnlBase - marginNetCost(h);
       const prDisplay  = displayCost === 0 ? 0 : (pnlDisplay / displayCost) * 100;
       const weight     = totalWithCash === 0 ? 0 : (displayMarket / totalWithCash) * 100;
 
@@ -2355,6 +2375,23 @@ function renderPortfolio() {
           onchange="updateManualMarket('${h.id}',this.value)"
           onblur="updateManualMarket('${h.id}',this.value)" />`;
 
+      // 損益欄：CB 可編輯；融資顯示淨損益 + 建倉日（只填一次，自動算天數/利息）；其他顯示損益
+      const pnlSpan = `<span class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</span>`;
+      let pnlCell;
+      if (isCB) {
+        pnlCell = `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`;
+      } else if (isMargin) {
+        const heldDays = marginDaysHeld(h);
+        // 損益可直接打字：輸入一個數字 → 鎖成該值（反推預估收入）；清空 → 回自動淨損益
+        const pnlInput = `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateMarginPnl('${h.id}',this.value)" onblur="updateMarginPnl('${h.id}',this.value)" />`;
+        const dayNote = h.manualEst == null
+          ? `<div style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-top:2px">建倉<input type="date" value="${h.openDate||''}" style="background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;padding:1px 3px;margin:0 2px;font-family:var(--mono);font-size:10px" onchange="updateOpenDate('${h.id}',this.value)" />${h.openDate?` ${heldDays}天 · 扣費${fmtMoney(marginNetCost(h))}`:`<span style="color:var(--down)"> ← 或填買進日自動算</span>`}</div>`
+          : `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">🔒 手動鎖定 · <span style="color:var(--gold);cursor:pointer;text-decoration:underline" onclick="clearMarginManual('${h.id}')">↺自動</span></div>`;
+        pnlCell = `<div>${pnlInput}${dayNote}</div>`;
+      } else {
+        pnlCell = pnlSpan;
+      }
+
       return `<tr>
         <td><select style="${selStyle}" onchange="updateTradeType('${h.id}',this.value)">
           ${['現股','融資','可轉債','零股','ETF','期貨','其他'].map(t=>`<option value="${t}"${h.tradeType===t?' selected':''}>${t}</option>`).join('')}
@@ -2370,10 +2407,7 @@ function renderPortfolio() {
         <td>${costCell}</td>
         <td>${incomeCell}</td>
         <td>${marketCell}</td>
-        <td>${isCB
-          ? `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`
-          : `<span class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</span>`
-        }</td>
+        <td>${pnlCell}</td>
         <td class="${signClass(prDisplay)}">${fmtPct(prDisplay)}</td>
         <td style="color:var(--text-dim);font-size:12px">${feeCell}</td>
         <td style="font-size:12px;${maintainStyle}">${maintainCell}</td>
@@ -2438,7 +2472,7 @@ function renderPortfolio() {
     if (h.manualCost != null) return s + h.manualCost;
     return s + h.shares * h.cost;
   }, 0);
-  const totalPnL = totalDisplayEst - totalFullCostDisplay;
+  const totalPnL = totalDisplayEst - totalFullCostDisplay - totalMarginNetCost();
   const totalPR = totalDisplayCost === 0 ? 0 : (totalPnL / totalDisplayCost) * 100;
 
   const totalRow = state.holdings.length > 0 ? `<tr style="border-top:2px solid var(--gold-dim);background:rgba(201,168,76,0.04)">
@@ -2477,7 +2511,7 @@ function addHolding() {
   }
   // 同代號 + 同交易類別才視為更新，不同類別一律新增
   const existing = ticker !== '' ? state.holdings.find(h => h.ticker === ticker && h.tradeType === tradeType) : null;
-  const data = { tradeType, ticker, name, shares, cost, price, sector, feeDiscount, marginRate, marginDays: 0, futuresFee };
+  const data = { tradeType, ticker, name, shares, cost, price, sector, feeDiscount, marginRate, openDate: null, futuresFee };
   if (existing) {
     Object.assign(existing, data);
     if (!existing.costLocked) existing.manualCost = null;
@@ -2770,7 +2804,7 @@ function applyBrokerRow(r) {
     shares: r.shares, cost: r.cost, price: r.price,
     sector: '其他', feeDiscount: 6,
     marginRate: r.tradeType === '融資' ? 0.6 : null,
-    marginDays: 0, futuresFee: r.tradeType === '期貨' ? 60 : 0,
+    openDate: null, futuresFee: r.tradeType === '期貨' ? 60 : 0,
     manualCost: (r.tradeType === '融資') ? null : (r.totalCost > 0 ? r.totalCost : null),
     manualMarket: null,
     manualEst: r.estIncome > 0 ? r.estIncome : null,
@@ -3013,6 +3047,27 @@ function updateManualEst(id, val) {
   const n = parseFloat(val);
   if (isNaN(n)) return;
   h.manualEst = n;
+  save(); renderPortfolio();
+}
+function updateOpenDate(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.openDate = val || null;   // 'YYYY-MM-DD'；清空則不計利息
+  save(); renderPortfolio();
+}
+// 融資損益直接輸入：把想要的損益反推成「預估收入 = 全額 + 損益」並鎖定；清空則回自動淨損益
+function updateMarginPnl(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  const n = parseFloat(val);
+  h.manualEst = isNaN(n) ? null : Math.round(h.shares * h.cost + n);
+  save(); renderPortfolio();
+}
+// 解除手動鎖定 → 融資損益回到自動公式（市值−全額−賣費−稅−利息）
+function clearMarginManual(id) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  h.manualEst = null;
   save(); renderPortfolio();
 }
 function toggleLock(id, field) {
