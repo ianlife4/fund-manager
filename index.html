@@ -2979,6 +2979,7 @@ async function ocrAndParse() {
 function updatePrice(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.price = parseFloat(val) || 0;
   h.manualMarket = null;
   save(); renderPortfolio();
@@ -2986,6 +2987,7 @@ function updatePrice(id, val) {
 function updateCbPnl(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   // CB: price 存未實現損益，直接更新
   h.price = parseFloat(val) || 0;
   h.manualMarket = null;
@@ -2995,18 +2997,21 @@ function updateCbPnl(id, val) {
 function updateName(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.name = val.trim() || h.ticker;
   save(); renderPortfolio();
 }
 function updateTicker(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.ticker = val.trim();
   save(); renderPortfolio();
 }
 function updateShares(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.shares = parseFloat(val) || 0;
   h.manualCost = null;
   h.manualMarket = null;
@@ -3016,21 +3021,31 @@ function updateShares(id, val) {
 function updateCost(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.cost = parseFloat(val) || 0;
   h.manualCost = null;
   save(); renderPortfolio();
 }
+// 在 ian(slave)編輯「同步來的」持倉時，自動把該檔解除同步 → 改了就留住，不再被強強滾蓋回。
+// （master 端持倉沒有 syncedFromMaster 旗標，所以這裡只會對 slave 的同步持倉生效。）
+function detachFromSync(h) {
+  if (h && h.syncedFromMaster) {
+    h.syncedFromMaster = false;
+    toast(`「${h.name || h.ticker}」已設為此帳戶獨立，之後不再跟${SYNC_MASTER_NAME}同步`);
+  }
+}
 function updateTradeType(id, val) {
   const h = state.holdings.find(h => h.id === id);
-  if (h) { h.tradeType = val; save(); renderPortfolio(); }
+  if (h) { detachFromSync(h); h.tradeType = val; save(); renderPortfolio(); }
 }
 function updateSector(id, val) {
   const h = state.holdings.find(h => h.id === id);
-  if (h) { h.sector = val; save(); renderPortfolio(); }
+  if (h) { detachFromSync(h); h.sector = val; save(); renderPortfolio(); }
 }
 function updateManualCost(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   const n = parseFloat(val);
   if (isNaN(n)) return;
   h.manualCost = n;
@@ -3039,6 +3054,7 @@ function updateManualCost(id, val) {
 function updateManualMarket(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   const n = parseFloat(val);
   if (isNaN(n)) return;
   h.manualMarket = n;
@@ -3050,6 +3066,7 @@ function updateManualMarket(id, val) {
 function updateManualEst(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   const n = parseFloat(val);
   if (isNaN(n)) return;
   h.manualEst = n;
@@ -3058,6 +3075,7 @@ function updateManualEst(id, val) {
 function updateOpenDate(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.openDate = val || null;   // 'YYYY-MM-DD'；清空則不計利息
   save(); renderPortfolio();
 }
@@ -3066,6 +3084,7 @@ function updateOpenDate(id, val) {
 function updatePnl(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   const n = parseFloat(val);
   if (isNaN(n)) { h.manualEst = null; save(); renderPortfolio(); return; }
   const totalAmt = h.shares * h.cost;
@@ -3077,12 +3096,14 @@ function updatePnl(id, val) {
 function clearManualPnl(id) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   h.manualEst = null;
   save(); renderPortfolio();
 }
 function toggleLock(id, field) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
+  detachFromSync(h);
   if (field === 'cost') {
     h.costLocked = !h.costLocked;
     // 鎖定時：若沒有手動值先存一個（目前的自動值）
