@@ -1614,6 +1614,10 @@ async function loadFromFirebase() {
     setSyncStatus('ok');
     window._onSnapshot(window._docRef, (snap) => {
       if (!snap.exists()) return;
+      // 防呆：遠端比本機舊（本機剛改、寫入仍在 1 秒 debounce 內）→ 不用舊資料蓋掉本機編輯，避免「改了被打回」
+      const _remoteTs = snap.data().updatedAt || 0;
+      const _localTs = JSON.parse(localStorage.getItem('fundMgr_v3') || '{}')._ts || 0;
+      if (_remoteTs < _localTs) return;
       try {
         const remote = JSON.parse(snap.data().data);
         if (remote.accounts) {
@@ -2375,21 +2379,23 @@ function renderPortfolio() {
           onchange="updateManualMarket('${h.id}',this.value)"
           onblur="updateManualMarket('${h.id}',this.value)" />`;
 
-      // 損益欄：CB 可編輯；融資顯示淨損益 + 建倉日（只填一次，自動算天數/利息）；其他顯示損益
-      const pnlSpan = `<span class="${signClass(pnlDisplay)}">${fmtMoney(pnlDisplay)}</span>`;
+      // 損益欄：全部可直接打字 → 反推鎖定（清空回自動）；融資多一個「建倉日」自動算利息；CB 用自己的未實現損益
       let pnlCell;
+      const pnlInputStyle = `${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700`;
       if (isCB) {
-        pnlCell = `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`;
-      } else if (isMargin) {
-        const heldDays = marginDaysHeld(h);
-        // 損益可直接打字：輸入一個數字 → 鎖成該值（反推預估收入）；清空 → 回自動淨損益
-        const pnlInput = `<input type="number" value="${pnlDisplay}" step="1" style="${inpFull};color:${pnlDisplay>=0?'var(--up)':'var(--down)'};font-weight:700" ${onEnter} onchange="updateMarginPnl('${h.id}',this.value)" onblur="updateMarginPnl('${h.id}',this.value)" />`;
-        const dayNote = h.manualEst == null
-          ? `<div style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-top:2px">建倉<input type="date" value="${h.openDate||''}" style="background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;padding:1px 3px;margin:0 2px;font-family:var(--mono);font-size:10px" onchange="updateOpenDate('${h.id}',this.value)" />${h.openDate?` ${heldDays}天 · 扣費${fmtMoney(marginNetCost(h))}`:`<span style="color:var(--down)"> ← 或填買進日自動算</span>`}</div>`
-          : `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">🔒 手動鎖定 · <span style="color:var(--gold);cursor:pointer;text-decoration:underline" onclick="clearMarginManual('${h.id}')">↺自動</span></div>`;
-        pnlCell = `<div>${pnlInput}${dayNote}</div>`;
+        pnlCell = `<input type="number" value="${pnlDisplay}" step="1" style="${pnlInputStyle}" ${onEnter} onchange="updateCbPnl('${h.id}',this.value)" onblur="updateCbPnl('${h.id}',this.value)" />`;
       } else {
-        pnlCell = pnlSpan;
+        const pnlInput = `<input type="number" value="${pnlDisplay}" step="1" style="${pnlInputStyle}" ${onEnter} onchange="updatePnl('${h.id}',this.value)" onblur="updatePnl('${h.id}',this.value)" />`;
+        let note = '';
+        if (isMargin) {
+          const heldDays = marginDaysHeld(h);
+          note = h.manualEst == null
+            ? `<div style="font-size:10px;color:var(--text-muted);white-space:nowrap;margin-top:2px">建倉<input type="date" value="${h.openDate||''}" style="background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;padding:1px 3px;margin:0 2px;font-family:var(--mono);font-size:10px" onchange="updateOpenDate('${h.id}',this.value)" />${h.openDate?` ${heldDays}天 · 扣費${fmtMoney(marginNetCost(h))}`:`<span style="color:var(--down)"> ← 或填買進日自動算</span>`}</div>`
+            : `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">🔒 手動鎖定 · <span style="color:var(--gold);cursor:pointer;text-decoration:underline" onclick="clearManualPnl('${h.id}')">↺自動</span></div>`;
+        } else if (h.manualEst != null) {
+          note = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">🔒 手動 · <span style="color:var(--gold);cursor:pointer;text-decoration:underline" onclick="clearManualPnl('${h.id}')">↺自動</span></div>`;
+        }
+        pnlCell = `<div>${pnlInput}${note}</div>`;
       }
 
       return `<tr>
@@ -3055,16 +3061,20 @@ function updateOpenDate(id, val) {
   h.openDate = val || null;   // 'YYYY-MM-DD'；清空則不計利息
   save(); renderPortfolio();
 }
-// 融資損益直接輸入：把想要的損益反推成「預估收入 = 全額 + 損益」並鎖定；清空則回自動淨損益
-function updateMarginPnl(id, val) {
+// 損益直接輸入：反推「預估收入 = 損益基準 + 輸入損益」並鎖定；清空則回自動。
+// 損益基準：融資 = 全額(股數×成本)；其他 = 付出成本(manualCost 或 股數×成本)。
+function updatePnl(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
   const n = parseFloat(val);
-  h.manualEst = isNaN(n) ? null : Math.round(h.shares * h.cost + n);
+  if (isNaN(n)) { h.manualEst = null; save(); renderPortfolio(); return; }
+  const totalAmt = h.shares * h.cost;
+  const base = h.tradeType === '融資' ? totalAmt : (h.manualCost != null ? h.manualCost : totalAmt);
+  h.manualEst = Math.round(base + n);
   save(); renderPortfolio();
 }
-// 解除手動鎖定 → 融資損益回到自動公式（市值−全額−賣費−稅−利息）
-function clearMarginManual(id) {
+// 解除手動鎖定 → 損益回到自動公式
+function clearManualPnl(id) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
   h.manualEst = null;
