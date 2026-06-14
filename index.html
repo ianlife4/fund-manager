@@ -955,6 +955,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-value" id="perf_drawdown" style="color:var(--down)">—</div>
       </div>
       <div class="card">
+        <div class="card-label">目前回吐（距高點）</div>
+        <div class="card-value" id="perf_curDD" style="color:var(--down)">—</div>
+      </div>
+      <div class="card">
         <div class="card-label">未實現損益</div>
         <div class="card-value" id="perf_unrealized">—</div>
       </div>
@@ -3420,7 +3424,7 @@ function renderPerformance() {
 
   const noData = chartData.length === 0;
   if (noData) {
-    ['perf_total','perf_high','perf_drawdown'].forEach(id => {
+    ['perf_total','perf_high','perf_drawdown','perf_curDD'].forEach(id => {
       document.getElementById(id).textContent = '—';
     });
   } else {
@@ -3448,6 +3452,17 @@ function renderPerformance() {
     el.className = 'card-value ' + (totalRet >= 0 ? 'positive' : 'negative');
     document.getElementById('perf_high').textContent = fmtMoney(maxNav);
     document.getElementById('perf_drawdown').textContent = maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%';
+    // 目前回吐 = 從歷史最高淨值(高水位)回落多少；創新高則顯示提示
+    const curNav = fundTotalNav();
+    const curDD = maxNav > 0 ? (maxNav - curNav) / maxNav * 100 : 0;
+    const curDDEl = document.getElementById('perf_curDD');
+    if (curDD < 0.05) {
+      curDDEl.innerHTML = '🔥 創新高';
+      curDDEl.style.color = 'var(--gold)';
+    } else {
+      curDDEl.innerHTML = '-' + curDD.toFixed(2) + '%<span style="font-size:11px;color:var(--text-muted);display:block;margin-top:2px">-' + fmtMoney(maxNav - curNav) + '</span>';
+      curDDEl.style.color = 'var(--down)';
+    }
   }
 
   // ── 套用時間範圍
