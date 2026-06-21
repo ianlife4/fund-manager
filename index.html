@@ -1677,8 +1677,10 @@ function totalMarketValue() {
   return state.holdings.reduce((s, h) => {
     // 可轉債：price 存未實現損益，市值 = 成本 + 未實現
     if (h.tradeType === '可轉債') return s + (h.cost || 0) + (h.price || 0);
-    // 一般：優先用 manualEst（手動估值，與 unrealizedPnL 邏輯同步），否則 shares × price
-    return s + (h.manualEst != null ? h.manualEst : h.shares * h.price);
+    // 一般：優先 manualEst（預估收入）→ 其次鎖定的市值 manualMarket → 最後才 shares × price。
+    // 與每列「損益」同源(displayIncome = manualEst ?? manualMarket ?? shares×price)，
+    // 避免「鎖了市值但現價打錯」時，合計/NAV 用 現價×股數 爆掉。
+    return s + (h.manualEst != null ? h.manualEst : (h.manualMarket != null ? h.manualMarket : h.shares * h.price));
   }, 0);
 }
 function totalCost() {
@@ -2468,7 +2470,7 @@ function renderPortfolio() {
   }, 0);
   const totalDisplayEst = state.holdings.reduce((s, h) => {
     if (h.tradeType === '可轉債') return s + (h.manualEst != null ? h.manualEst : (h.cost||0) + (h.price||0));
-    const est = h.manualEst != null ? h.manualEst : h.shares * h.price;
+    const est = h.manualEst != null ? h.manualEst : (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
     return s + est;
   }, 0);
   const totalDisplayMarket = state.holdings.reduce((s, h) => {
@@ -2777,14 +2779,21 @@ function parseSpaceRow(line) {
 
   // 找預估收入（含手續費扣減）：priceIdx 之後，≈ price × shares 的大數
   // 國票格式中預估收入通常在現價之後且略小於市值（扣手續費）
-  let estIncome = 0;
+  let estIncome = 0, mvIdx = -1;
   const expectedMV = price * shares;
   for (let i = priceIdx + 1; i < nums.length; i++) {
     if (nums[i] <= 0) continue;
-    // 預估收入通常是市值的 98%~100%
+    // 資產市值通常是 現價×股數 的 97%~101%
     if (nums[i] >= expectedMV * 0.97 && nums[i] <= expectedMV * 1.01) {
-      estIncome = nums[i];
-      break;
+      mvIdx = i; estIncome = nums[i]; break;
+    }
+  }
+  // 損益試算（券商淨損益）：資產市值後第一個「小值」(可負) → 讓現股也對齊券商，而非毛額。
+  // estIncome 改設為 付出成本 + 損益試算，使 損益 = estIncome − 付出成本 = 券商損益試算(= 淨值 − 付出成本)。
+  if (mvIdx >= 0 && totalCost > 0) {
+    const pnl = (mvIdx + 1 < nums.length) ? nums[mvIdx + 1] : NaN;
+    if (!isNaN(pnl) && Math.abs(pnl) < expectedMV * 0.8) {
+      estIncome = Math.round(totalCost + pnl);
     }
   }
 
