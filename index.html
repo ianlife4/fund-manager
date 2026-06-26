@@ -2307,7 +2307,7 @@ function renderPortfolio() {
   const mv = totalMarketValue();
   const cash = cashBalance();
   const totalWithCash = mv + cash;
-  const capBase = fundCapital();   // 本金，用於每列「佔本金%」
+  const navBase = fundTotalNav();   // 淨值，用於每列「佔淨值%」(個股佔淨值比重，法人標準)
   const tbody = document.getElementById('holdingsTbody');
   document.getElementById('holdingCount').textContent = `共 ${state.holdings.length} 檔`;
 
@@ -2440,7 +2440,7 @@ function renderPortfolio() {
         <td><div class="weight-bar-wrap">
           <div class="weight-bar" style="width:${Math.max(weight*2,2)}px"></div>
           <span class="weight-num">${weight.toFixed(1)}%</span>
-        </div>${capBase > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:3px">佔本金 ${(displayMarket/capBase*100).toFixed(1)}%</div>` : ''}</td>
+        </div>${navBase > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:3px">佔淨值 ${(displayMarket/navBase*100).toFixed(1)}%</div>` : ''}</td>
         <td><button class="btn btn-danger btn-sm" onclick="deleteHolding('${h.id}')">刪除</button></td>
       </tr>`;
     }).join('');
