@@ -1838,11 +1838,10 @@ function renderOverview() {
 
   const mv = totalMarketValue(), tc = totalCost(), pnl = totalPnL(), pr = profitRate();
   const nav = fundTotalNav();
-  // 持股水位 = 持股市值 ÷ 本金（>100% 代表用到融資槓桿）
-  const cap = fundCapital();
-  const exposure = cap > 0 ? (mv / cap) * 100 : 0;
+  // 持股水位 = 持股市值 ÷ 淨值(NAV)（法人/基金經理人標準；>100% = 用到融資槓桿，<100% 留有現金）
+  const exposure = nav > 0 ? (mv / nav) * 100 : 0;
   const expColor = exposure > 100 ? 'var(--up)' : 'var(--gold)';
-  const expNote = cap <= 0 ? '尚無本金紀錄' : exposure > 100 ? '⚠ 用到融資槓桿' : exposure < 60 ? '現金水位高' : '持股市值 ÷ 本金';
+  const expNote = nav <= 0 ? '—' : exposure > 100 ? '⚠ 融資槓桿' : exposure < 60 ? '現金水位高、有子彈' : '股票市值 ÷ 淨值';
   const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
 
   // 「距上次報酬」：以「目前淨值」對比「今天以前最近一筆快照」
@@ -1873,7 +1872,7 @@ function renderOverview() {
     </div>
     <div class="card">
       <div class="card-label">持股水位</div>
-      <div class="card-value" style="color:${expColor}">${cap > 0 ? exposure.toFixed(1) + '%' : '—'}</div>
+      <div class="card-value" style="color:${expColor}">${nav > 0 ? exposure.toFixed(1) + '%' : '—'}</div>
       <div class="card-change" style="color:var(--text-muted);font-size:11px">${expNote}</div>
     </div>
     <div class="card">
