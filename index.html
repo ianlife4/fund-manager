@@ -3445,9 +3445,12 @@ function renderPerformance() {
     navPoints.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav() });
 
     const navSeries = navPoints.map(p => p.nav);
-    const maxNav = navSeries.length > 0 ? Math.max(...navSeries) : fundTotalNav();
+    // 高水位錨定在「本金(firstDeposit)」：淨值還沒回本(< 本金)就不會假性顯示「創新高」，
+    // 此時 目前回吐 = 離本金多遠(= −累計報酬率)；唯有淨值超過本金、再刷新才算真的創新高。
+    const hwmFloor = firstDeposit > 1 ? firstDeposit : 0;
+    const maxNav = navSeries.length > 0 ? Math.max(hwmFloor, ...navSeries) : Math.max(hwmFloor, fundTotalNav());
 
-    let maxDD = 0, peak = navSeries[0] || 0;
+    let maxDD = 0, peak = Math.max(hwmFloor, navSeries[0] || 0);
     navSeries.forEach(v => {
       if (v > peak) peak = v;
       const dd = peak > 0 ? (peak - v) / peak * 100 : 0;
