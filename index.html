@@ -1711,6 +1711,10 @@ function marginDaysHeld(h) {
   const d = Math.floor((Date.now() - t) / 86400000);
   return d > 0 ? d : 0;
 }
+// 本金 = 累計入金總額（不扣已實現/出金）。用於「持股水位」「每檔佔本金%」。
+function fundCapital() {
+  return (state.cashflows || []).filter(c => c.type === '入金').reduce((s, c) => s + (c.amount || 0), 0);
+}
 // 融資未實現損益要扣的「平倉成本」：賣出手續費 + 證交稅 + 融資利息，讓 App 損益對齊券商「損益試算」。
 // 只在「預估收入」未手動鎖定（manualEst==null）時自動扣；
 // 若已從券商「未實現損益」匯入或手動鎖定預估收入，該值本身就是淨損益，回傳 0 不重複扣。
@@ -1834,6 +1838,11 @@ function renderOverview() {
 
   const mv = totalMarketValue(), tc = totalCost(), pnl = totalPnL(), pr = profitRate();
   const nav = fundTotalNav();
+  // 持股水位 = 持股市值 ÷ 本金（>100% 代表用到融資槓桿）
+  const cap = fundCapital();
+  const exposure = cap > 0 ? (mv / cap) * 100 : 0;
+  const expColor = exposure > 100 ? 'var(--up)' : 'var(--gold)';
+  const expNote = cap <= 0 ? '尚無本金紀錄' : exposure > 100 ? '⚠ 用到融資槓桿' : exposure < 60 ? '現金水位高' : '持股市值 ÷ 本金';
   const snaps = [...(state.snapshots||[])].sort((a,b)=>a.date.localeCompare(b.date));
 
   // 「距上次報酬」：以「目前淨值」對比「今天以前最近一筆快照」
@@ -1861,6 +1870,11 @@ function renderOverview() {
       <div class="card-label">基金總市值</div>
       <div class="card-value" style="color:var(--gold)">${fmtMoney(nav)}</div>
       <div class="card-change">市值總計</div>
+    </div>
+    <div class="card">
+      <div class="card-label">持股水位</div>
+      <div class="card-value" style="color:${expColor}">${cap > 0 ? exposure.toFixed(1) + '%' : '—'}</div>
+      <div class="card-change" style="color:var(--text-muted);font-size:11px">${expNote}</div>
     </div>
     <div class="card">
       <div class="card-label">付出總成本</div>
@@ -2294,6 +2308,7 @@ function renderPortfolio() {
   const mv = totalMarketValue();
   const cash = cashBalance();
   const totalWithCash = mv + cash;
+  const capBase = fundCapital();   // 本金，用於每列「佔本金%」
   const tbody = document.getElementById('holdingsTbody');
   document.getElementById('holdingCount').textContent = `共 ${state.holdings.length} 檔`;
 
@@ -2426,7 +2441,7 @@ function renderPortfolio() {
         <td><div class="weight-bar-wrap">
           <div class="weight-bar" style="width:${Math.max(weight*2,2)}px"></div>
           <span class="weight-num">${weight.toFixed(1)}%</span>
-        </div></td>
+        </div>${capBase > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:3px">佔本金 ${(displayMarket/capBase*100).toFixed(1)}%</div>` : ''}</td>
         <td><button class="btn btn-danger btn-sm" onclick="deleteHolding('${h.id}')">刪除</button></td>
       </tr>`;
     }).join('');
