@@ -947,6 +947,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="card-value" id="perf_total">—</div>
       </div>
       <div class="card">
+        <div class="card-label">單位淨值（基準100）</div>
+        <div class="card-value" id="perf_unitNav" style="color:var(--gold)">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">時間加權報酬 TWR</div>
+        <div class="card-value" id="perf_twr">—</div>
+      </div>
+      <div class="card">
         <div class="card-label">最高獲利</div>
         <div class="card-value" id="perf_high" style="color:var(--gold)">—</div>
       </div>
@@ -1756,6 +1764,38 @@ function marginLoanTotal() {
 }
 // 基金總市值 = 持倉市值 + 現金餘額 - 融資借款（券商欠款是負債，不能算進淨值）
 function fundTotalNav() { return totalMarketValue() + cashBalance() - marginLoanTotal(); }
+
+// 單位淨值 / 時間加權報酬(TWR)：把入金/出金當成「以當時單位淨值買/賣單位」，
+// 單位淨值只反映操作績效、不被金流墊高（基準 100）。法人標準算法。
+// 純讀「快照 nav + 入金/出金」計算，不改任何原始資料。沒入金紀錄則回傳 null。
+function computeUnitNav() {
+  const today = new Date().toISOString().slice(0, 10);
+  const snaps = [...(state.snapshots || [])]
+    .filter(s => s && s.date && typeof s.nav === 'number')
+    .map(s => ({ date: s.date, nav: s.nav, kind: 'snap' }));
+  snaps.push({ date: today, nav: fundTotalNav(), kind: 'snap' });
+  const flows = (state.cashflows || [])
+    .filter(c => (c.type === '入金' || c.type === '出金') && c.date)
+    .map(c => ({ date: c.date, amt: c.type === '入金' ? (c.amount || 0) : -(c.amount || 0), kind: 'flow' }));
+  // 同一天：金流先處理（入金後當天的快照才含該筆現金）
+  const events = [...flows, ...snaps].sort((a, b) =>
+    a.date.localeCompare(b.date) || (a.kind === 'flow' ? -1 : 1));
+
+  let units = 0, unitNav = 100;
+  const series = [];
+  for (const e of events) {
+    if (e.kind === 'flow') {
+      if (units <= 0) units = e.amt > 0 ? e.amt / 100 : 0;   // 第一筆資金 → 基準 100
+      else units += e.amt / unitNav;                          // 以當時單位淨值買/賣單位
+      if (units < 0) units = 0;
+    } else if (units > 0) {
+      unitNav = e.nav / units;
+      series.push({ date: e.date, unitNav });
+    }
+  }
+  if (units <= 0 || series.length === 0) return null;
+  return { unitNav, twr: unitNav / 100 - 1, series };
+}
 
 const DEFAULT_COLORS = [
   '#ef5350','#c9a84c','#66bb6a','#5c6bc0','#ff7043',
@@ -3444,6 +3484,20 @@ function renderPerformance() {
   const realEl = document.getElementById('perf_realized');
   realEl.textContent = fmtMoney(totalRealized);
   realEl.className = 'card-value ' + signClass(totalRealized);
+
+  // 單位淨值 / TWR（時間加權報酬，金流中性；沒入金紀錄則顯示 —）
+  const un = computeUnitNav();
+  const unEl = document.getElementById('perf_unitNav');
+  const twEl = document.getElementById('perf_twr');
+  if (un) {
+    unEl.textContent = un.unitNav.toFixed(2);
+    twEl.textContent = fmtPct(un.twr * 100);
+    twEl.className = 'card-value ' + (un.twr >= 0 ? 'positive' : 'negative');
+  } else {
+    unEl.textContent = '—';
+    twEl.textContent = '—';
+    twEl.className = 'card-value';
+  }
 
   const noData = chartData.length === 0;
   if (noData) {
