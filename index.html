@@ -2758,6 +2758,8 @@ function parseSpaceRow(line) {
       .replace(/\s+/g, '').replace(/[\-\*\|]+$/, '').replace(/^[\-\*\|]+/, '').trim();
     afterStr = afterTicker.substring(firstNumMatch.index);
   }
+  // 去掉名稱前面誤黏的交易類別字（融資/現股/融券…），只留純股名
+  name = name.replace(/^(現股|融資|融券|現沖|零股|期貨|資買|資賣|券買|券賣)+/, '').trim();
   if (!name) name = ticker;
 
   // 判斷類別（整行搜尋）
@@ -2863,6 +2865,8 @@ function applyBrokerRow(r) {
     existing.price = r.price;
     // 只在從網站直接複製（文字乾淨）時才更新名稱，OCR 名稱可能有錯不覆蓋
     if (r.nameClean) existing.name = r.name;
+    // 順手清掉舊資料名稱前面誤黏的交易類別字（重新匯入即可修正舊的「融資XX/現股XX」）
+    existing.name = (existing.name || '').replace(/^(現股|融資|融券|現沖|零股|期貨|資買|資賣|券買|券賣)+/, '').trim() || existing.name;
     // 匯入時強制重設所有手動值（忽略鎖定），以券商數值為主
     existing.manualCost = (r.tradeType === '融資') ? null : (r.totalCost > 0 ? r.totalCost : null);
     existing.manualMarket = null; // 市值 = shares × price（自動）
