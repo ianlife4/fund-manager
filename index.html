@@ -3627,8 +3627,30 @@ function renderPerformance() {
 
     const dashColor = '#5b9cf6';
 
+    // 出金事件日期 → 圖上把該點標紅、放大,並在下方畫「▼ 出金」
+    const outDates = new Set(cfEvents.filter(c => c.type === '出金').map(c => c.date));
+    const outLabelPlugin = {
+      id: 'outLabels',
+      afterDatasetsDraw(chart) {
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data) return;
+        const g = chart.ctx;
+        g.save();
+        g.font = '700 10px sans-serif';
+        g.fillStyle = '#f26e6e';
+        g.textAlign = 'center';
+        data.forEach((pt, i) => {
+          if (outDates.has(pt.date) && meta.data[i]) {
+            g.fillText('▼ 出金', meta.data[i].x, meta.data[i].y + 20);
+          }
+        });
+        g.restore();
+      }
+    };
+
     navChartInstance = new Chart(ctx1, {
       type: 'line',
+      plugins: [outLabelPlugin],
       data: {
         labels: data.map(s=>s.date),
         datasets: [
@@ -3638,8 +3660,8 @@ function renderPerformance() {
             borderColor: navColor,
             backgroundColor: gradConfirmed,
             borderWidth: 2.5,
-            pointRadius: 4,
-            pointBackgroundColor: navColor,
+            pointRadius: data.map(s => outDates.has(s.date) ? 7 : 4),
+            pointBackgroundColor: data.map(s => outDates.has(s.date) ? '#f26e6e' : navColor),
             fill: true,
             tension: 0.3,
             order: 1,
