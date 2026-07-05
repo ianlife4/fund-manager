@@ -219,6 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   .card-change.up { color: var(--green); }
   .card-change.down { color: var(--red); }
+  /* 卡片分類色條（識別度）：績效=金(最亮最粗) / 風險=紅 / 部位=藍 / 規模明細=灰 */
+  .card.c-perf::before { background: linear-gradient(90deg, var(--gold-dim), var(--gold)); opacity: 1; height: 3px; }
+  .card.c-risk::before { background: linear-gradient(90deg, transparent, var(--red)); opacity: .8; }
+  .card.c-pos::before  { background: linear-gradient(90deg, transparent, var(--blue)); opacity: .85; }
+  .card.c-size::before { background: var(--border); opacity: .55; }
 
   /* ── SECTION ── */
   .section {
@@ -933,44 +938,53 @@ document.addEventListener('DOMContentLoaded', () => {
   <div id="page-performance" class="page">
 
     <div class="cards-grid" style="grid-template-columns:repeat(7,1fr)">
-      <div class="card">
+      <!-- ── 績效（金）：最重要，看這排 ── -->
+      <div class="card c-perf">
+        <div class="card-label">累計報酬率</div>
+        <div class="card-value" id="perf_total">—</div>
+      </div>
+      <div class="card c-perf">
+        <div class="card-label">時間加權報酬 TWR</div>
+        <div class="card-value" id="perf_twr">—</div>
+      </div>
+      <div class="card c-perf">
+        <div class="card-label">單位淨值（基準100）</div>
+        <div class="card-value" id="perf_unitNav" style="color:var(--gold)">—</div>
+      </div>
+      <!-- ── 風險（紅） ── -->
+      <div class="card c-risk">
+        <div class="card-label">最大回撤 MDD</div>
+        <div class="card-value" id="perf_drawdown" style="color:var(--down)">—</div>
+      </div>
+      <div class="card c-risk">
+        <div class="card-label">目前回吐（距高點）</div>
+        <div class="card-value" id="perf_curDD" style="color:var(--down)">—</div>
+      </div>
+      <div class="card c-risk">
+        <div class="card-label">最高淨值（高水位）</div>
+        <div class="card-value" id="perf_high" style="color:var(--gold)">—</div>
+      </div>
+      <!-- ── 部位（藍） ── -->
+      <div class="card c-pos">
+        <div class="card-label">持股水位</div>
+        <div class="card-value" id="perf_exposure">—</div>
+        <div class="card-change" id="perf_exposureNote" style="color:var(--text-muted);font-size:11px">市值 ÷ 淨值</div>
+      </div>
+      <!-- ── 規模 / 明細（灰）：背景數字 ── -->
+      <div class="card c-size">
         <div class="card-label">基金總淨值</div>
         <div class="card-value" id="perf_totalNav" style="color:var(--gold)">—</div>
         <div class="card-change" style="color:var(--text-muted);font-size:11px">持股市值 + 現金</div>
       </div>
-      <div class="card">
+      <div class="card c-size">
         <div class="card-label">淨投入資金</div>
         <div class="card-value" id="perf_netDep" style="color:var(--text)">—</div>
       </div>
-      <div class="card">
-        <div class="card-label">累計報酬率</div>
-        <div class="card-value" id="perf_total">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">單位淨值（基準100）</div>
-        <div class="card-value" id="perf_unitNav" style="color:var(--gold)">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">時間加權報酬 TWR</div>
-        <div class="card-value" id="perf_twr">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">最高淨值（高水位）</div>
-        <div class="card-value" id="perf_high" style="color:var(--gold)">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">最大回撤 MDD</div>
-        <div class="card-value" id="perf_drawdown" style="color:var(--down)">—</div>
-      </div>
-      <div class="card">
-        <div class="card-label">目前回吐（距高點）</div>
-        <div class="card-value" id="perf_curDD" style="color:var(--down)">—</div>
-      </div>
-      <div class="card">
+      <div class="card c-size">
         <div class="card-label">未實現損益</div>
         <div class="card-value" id="perf_unrealized">—</div>
       </div>
-      <div class="card">
+      <div class="card c-size">
         <div class="card-label">累計已實現損益</div>
         <div class="card-value" id="perf_realized">—</div>
       </div>
@@ -3501,6 +3515,19 @@ function renderPerformance() {
     unEl.textContent = '—';
     twEl.textContent = '—';
     twEl.className = 'card-value';
+  }
+
+  // 持股水位（÷淨值，與總覽同基準；>100% = 融資槓桿）
+  const _mvE = totalMarketValue(), _navE = fundTotalNav();
+  const expoPct = _navE > 0 ? _mvE / _navE * 100 : 0;
+  const expoEl = document.getElementById('perf_exposure');
+  const expoNoteEl = document.getElementById('perf_exposureNote');
+  if (_navE > 0) {
+    expoEl.textContent = expoPct.toFixed(1) + '%';
+    expoEl.style.color = expoPct > 100 ? 'var(--up)' : 'var(--gold)';
+    if (expoNoteEl) expoNoteEl.textContent = expoPct > 100 ? '⚠ 融資槓桿' : expoPct < 60 ? '現金水位高' : '市值 ÷ 淨值';
+  } else {
+    expoEl.textContent = '—';
   }
 
   const noData = chartData.length === 0;
