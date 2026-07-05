@@ -3270,25 +3270,24 @@ function renderCashflow() {
     const prefix = isIncome ? '+' : '-';
     const absAmt = Math.abs(c.amount);
 
-    const inv = (state.investors || []).find(i => i.id === c.person);
-    const personName = inv ? `<span class="badge badge-gold">${inv.name}</span>` : '<span style="color:var(--text-muted)">—</span>';
-    return `<tr>
+    // 出金/流出標記：錢流出的分錄（出金、手續費、或負向）→ 左側綠色條 + 淡底，一眼看出
+    const isOut = !isIncome;
+    const rowStyle = isOut
+      ? 'border-left:3px solid #3ecf8e;background:rgba(62,207,142,0.05);'
+      : 'border-left:3px solid transparent;';
+    return `<tr style="${rowStyle}">
       <td>
         <input type="date" value="${c.date}"
-          style="background:transparent;border:1px solid transparent;color:var(--text-dim);font-family:var(--mono);font-size:13px;border-radius:6px;padding:2px 6px;cursor:pointer;"
-          onmouseover="this.style.borderColor='var(--border)'"
-          onmouseout="this.style.borderColor='transparent'"
+          style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;border-radius:6px;padding:3px 6px;cursor:pointer;"
           onchange="updateCashflowDate('${c.id}', this.value)" />
       </td>
-      <td><span class="badge ${badge}">${c.type}</span></td>
-      <td>${personName}</td>
-      <td>${c.note || '—'}</td>
+      <td><select onchange="updateCashflowType('${c.id}',this.value)" style="background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--sans);font-size:12px;border-radius:6px;padding:3px 6px;cursor:pointer;">${['入金','出金','股息','已實現','手續費'].map(t=>`<option${c.type===t?' selected':''}>${t}</option>`).join('')}</select></td>
+      <td><select onchange="updateCashflowPerson('${c.id}',this.value)" style="background:var(--surface);border:1px solid var(--border);color:var(--text-dim);font-family:var(--sans);font-size:12px;border-radius:6px;padding:3px 6px;cursor:pointer;"><option value=""${!c.person?' selected':''}>—</option>${(state.investors||[]).map(i=>`<option value="${i.id}"${c.person===i.id?' selected':''}>${i.name}</option>`).join('')}</select></td>
+      <td><input type="text" value="${(c.note||'').replace(/"/g,'&quot;')}" placeholder="備註" onchange="updateCashflowNote('${c.id}',this.value)" onblur="updateCashflowNote('${c.id}',this.value)" onkeydown="if(event.key==='Enter')this.blur()" style="background:transparent;border:1px solid transparent;color:var(--text);font-family:var(--sans);font-size:13px;border-radius:6px;padding:2px 6px;width:150px;" onmouseover="this.style.borderColor='var(--border)'" onmouseout="this.style.borderColor='transparent'" /></td>
       <td class="${amtClass}" style="font-family:var(--mono)">
         <span style="margin-right:2px">${isIncome ? '+' : '-'}</span>$<input
           type="number" value="${absAmt}" step="1"
-          style="width:100px;background:transparent;border:1px solid transparent;color:inherit;font-family:var(--mono);font-size:13px;border-radius:6px;padding:2px 4px;text-align:right;"
-          onmouseover="this.style.borderColor='var(--border)'"
-          onmouseout="this.style.borderColor='transparent'"
+          style="width:110px;background:var(--bg);border:1px solid var(--border);color:inherit;font-family:var(--mono);font-size:13px;border-radius:6px;padding:3px 6px;text-align:right;"
           onchange="updateCashflowAmount('${c.id}', this.value)" />
       </td>
       <td style="color:var(--gold);font-family:var(--mono)">${fmtMoney(runningMap[c.id])}</td>
@@ -3322,6 +3321,18 @@ function updateCashflowDate(id, val) {
 function updateCashflowAmount(id, val) {
   const c = state.cashflows.find(c => c.id === id);
   if (c) { c.amount = parseFloat(val) || 0; save(); renderCashflow(); toast('金額已更新 ✓'); }
+}
+function updateCashflowType(id, val) {
+  const c = state.cashflows.find(c => c.id === id);
+  if (c) { c.type = val; save(); renderCashflow(); toast('類別已更新 ✓'); }
+}
+function updateCashflowNote(id, val) {
+  const c = state.cashflows.find(c => c.id === id);
+  if (c) { c.note = (val || '').trim(); save(); renderCashflow(); }
+}
+function updateCashflowPerson(id, val) {
+  const c = state.cashflows.find(c => c.id === id);
+  if (c) { c.person = val || null; save(); renderCashflow(); }
 }
 
 // ════════════════════════════════════════════
@@ -3413,6 +3424,15 @@ function renderPerformance() {
       else chartData.push({ date: p.date, nav: p.cashOnly, type: 'cf' });
     });
   }
+
+  // ── 把出入金事件日期補成資料點（已實現交給下面的分配點處理）：
+  //    讓「已確定淨值」在每筆出金當天就顯示下滑。原本有快照時,出金當天若無快照不會成點 → 看不出下滑。
+  cfEvents.filter(c => c.type === '入金' || c.type === '出金' || c.type === '股息' || c.type === '手續費').forEach(c => {
+    if (!chartData.find(d => d.date === c.date)) {
+      const cfp = [...cfPoints].reverse().find(p => p.date === c.date);
+      chartData.push({ date: c.date, nav: cfp ? cfp.cashOnly : 0, type: 'cf' });
+    }
+  });
 
   // ── 把獲利分配日期補進 chartData（若尚未存在）
   // 每一期 NAV 估算：協議池 + 截至該期的累計本期獲利
