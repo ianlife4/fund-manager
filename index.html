@@ -2483,7 +2483,7 @@ function renderPortfolio() {
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
         <td><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></td>
-        <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>` : `<input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />`}</td>
+        <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>` : `<div><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />${(h.tradeType!=='期貨' && (h.price>10000 || h.cost>10000)) ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 股價異常,疑少小數點</div>` : ''}</div>`}</td>
         <td>${costCell}</td>
         <td>${incomeCell}</td>
         <td>${marketCell}</td>
