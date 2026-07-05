@@ -1259,6 +1259,26 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
 
     <div class="section readonly-hide">
+      <div class="section-header"><span class="section-title">複製帳戶</span></div>
+      <div class="section-body">
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">把「來源帳戶」的全部內容(持倉／出入金／快照／獲利分配…)複製並<strong style="color:var(--red)">覆蓋</strong>到「目標帳戶」。目標帳戶原本的內容會被蓋掉、無法復原(建議先按下方「立即備份全部帳戶」)。</p>
+        <div class="form-grid" style="max-width:600px">
+          <div class="form-group">
+            <label class="form-label">來源帳戶（複製它）</label>
+            <select class="form-input" id="s_copySrc"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">目標帳戶（貼到這、會被覆蓋）</label>
+            <select class="form-input" id="s_copyDst"></select>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn btn-gold" onclick="copyAccountData()">複製 → 覆蓋目標帳戶</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section readonly-hide">
       <div class="section-header"><span class="section-title">密碼管理</span></div>
       <div class="section-body">
         <div class="form-grid" style="max-width:600px">
@@ -4077,6 +4097,38 @@ function renderSettings() {
   document.getElementById('s_viewPassword').value = state.viewPassword || '';
   document.getElementById('s_masterPassword').value = globalSettings.masterPassword || '';
   document.getElementById('s_visitorPassword').value = globalSettings.visitorPassword || '';
+  // 複製帳戶下拉：列出所有帳戶（來源預設當前、目標預設另一個）
+  const _srcSel = document.getElementById('s_copySrc');
+  const _dstSel = document.getElementById('s_copyDst');
+  if (_srcSel && _dstSel) {
+    const _opts = accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+    _srcSel.innerHTML = _opts;
+    _dstSel.innerHTML = _opts;
+    _srcSel.value = currentAccountId;
+    const _other = accounts.find(a => a.id !== currentAccountId);
+    if (_other) _dstSel.value = _other.id;
+  }
+}
+// 複製帳戶：把來源帳戶全部內容深拷貝、覆蓋目標帳戶（保留目標的 id/名稱/密碼；清掉同步旗標）
+function copyAccountData() {
+  const src = accounts.find(a => a.id === document.getElementById('s_copySrc').value);
+  const dst = accounts.find(a => a.id === document.getElementById('s_copyDst').value);
+  if (!src || !dst) { toast('請選擇帳戶'); return; }
+  if (src.id === dst.id) { toast('來源和目標不能相同'); return; }
+  if (!confirm(`確定把「${src.name}」的全部內容複製、覆蓋到「${dst.name}」嗎？\n\n「${dst.name}」原本的資料會被蓋掉、無法復原（建議先備份）。`)) return;
+  const clone = JSON.parse(JSON.stringify(src));
+  const keepId = dst.id, keepName = dst.name, keepPwd = dst.viewPassword;
+  Object.keys(dst).forEach(k => delete dst[k]);
+  Object.assign(dst, clone, { id: keepId, name: keepName, viewPassword: keepPwd });
+  if (dst.settings) dst.settings.fundName = keepName;
+  // 清掉「從 master 同步」旗標，讓目標帳戶持倉是自己的、不被強強滾覆蓋
+  (dst.holdings || []).forEach(h => { if (h.syncedFromMaster) delete h.syncedFromMaster; });
+  if (currentAccountId === dst.id) state = dst;
+  saveAllAccounts();
+  renderAccountBar();
+  renderSettings();
+  if (currentAccountId === dst.id) renderPage('overview');
+  toast(`已把「${src.name}」複製到「${dst.name}」✓`);
 }
 function saveSettings() {
   state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
