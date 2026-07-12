@@ -1485,14 +1485,21 @@ function setSyncStatus(s) {
 }
 
 // ════════════════════════════════════════════
-// 帳戶間單向同步：強強滾 → ian
+// 帳戶間單向同步（鏈式）：強強滾 → ian → 俊
+// 只同步 holdings（標的 + 損益欄位）。snapshots / 出入金 / profitDists（= 各帳戶淨值績效歷史）各自獨立,不同步。
 // 規則：
-//   - 強強滾的 holdings 推到 ian,在 ian 端標 syncedFromMaster: true
-//   - ian 端的 holdings 若沒有 syncedFromMaster 旗標,視為 ian 自己的,永遠不被動
-//   - 同 ticker+tradeType 已存在 ian (無旗標) → 跳過 (例:康普 47394)
-//   - 強強滾刪一檔 → ian 上對應 syncedFromMaster 那筆也跟著刪
-//   - ian 端修改不會推回強強滾 (單向)
+//   - master 的 holdings 推到 slave,在 slave 端標 syncedFromMaster: true
+//   - slave 端 holding 若沒旗標,視為 slave 自己的（強強滾→ian 這對會跳過不覆蓋,例:康普 47394）
+//   - master 刪一檔 → slave 上對應 syncedFromMaster 那筆也跟著刪
+//   - slave 端手動修改任一欄 → detachFromSync 把該檔 syncedFromMaster 設 false,之後不再被蓋(可微調不被綁)
+//   - adopt:true 的對(ian→俊)：連 slave 端「沒旗標」的既有持倉(例:之前複製過來的)也納入同步、跟著 master;
+//            只有被明確 detach(false)的才不覆蓋 → 讓 俊 的標的+損益完整跟著 ian。
 // ════════════════════════════════════════════
+const SYNC_PAIRS = [
+  { master: '強強滾', slave: 'ian', adopt: false },
+  { master: 'ian',   slave: '俊',  adopt: true  },
+];
+// 舊常數保留相容
 const SYNC_MASTER_NAME = '強強滾';
 const SYNC_SLAVE_NAME = 'ian';
 let _isSyncing = false;
@@ -1501,51 +1508,59 @@ function _holdingKey(h) {
   return `${(h.ticker || '').trim()}::${h.tradeType || ''}`;
 }
 
+// 單對同步（_isSyncing 由 syncMasterToSlave 統一包住,這裡不碰）
+function _syncPair(masterName, slaveName, adopt) {
+  const master = accounts.find(a => a.name === masterName);
+  const slave = accounts.find(a => a.name === slaveName);
+  if (!master || !slave || master.id === slave.id) return false;
+  if (!slave.holdings) slave.holdings = [];
+  const masterHoldings = master.holdings || [];
+  const snapshotBefore = JSON.stringify(slave.holdings);
+
+  const slaveByKey = new Map();
+  slave.holdings.forEach(h => slaveByKey.set(_holdingKey(h), h));
+  const masterKeys = new Set(masterHoldings.map(_holdingKey));
+
+  masterHoldings.forEach(mh => {
+    const key = _holdingKey(mh);
+    const sh = slaveByKey.get(key);
+    if (sh) {
+      // adopt：沒旗標的也納入(除非明確 detach 成 false)；非 adopt：只更新已同步的
+      const shouldUpdate = adopt ? (sh.syncedFromMaster !== false) : (sh.syncedFromMaster === true);
+      if (shouldUpdate) {
+        const id = sh.id;
+        Object.keys(sh).forEach(k => { if (k !== 'id') delete sh[k]; });
+        Object.assign(sh, JSON.parse(JSON.stringify(mh)), { id, syncedFromMaster: true });
+      }
+    } else {
+      const cloned = JSON.parse(JSON.stringify(mh));
+      cloned.id = Date.now().toString() + Math.random().toString(36).slice(2,6);
+      cloned.syncedFromMaster = true;
+      slave.holdings.push(cloned);
+    }
+  });
+
+  slave.holdings = slave.holdings.filter(sh => {
+    if (!sh.syncedFromMaster) return true;       // 自己的 / 已 detach → 保留
+    return masterKeys.has(_holdingKey(sh));       // 同步來的 → master 沒了就刪
+  });
+
+  if (state && currentAccountId === slave.id) {
+    state.holdings = slave.holdings;
+  }
+  return JSON.stringify(slave.holdings) !== snapshotBefore;
+}
+
+// 依鏈序跑所有同步對：強強滾 → ian → 俊（前一對先更新,後一對才吃到最新的 ian）
 function syncMasterToSlave() {
   if (_isSyncing) return false;
-  const master = accounts.find(a => a.name === SYNC_MASTER_NAME);
-  const slave = accounts.find(a => a.name === SYNC_SLAVE_NAME);
-  if (!master || !slave || master.id === slave.id) return false;
-
   _isSyncing = true;
   try {
-    if (!slave.holdings) slave.holdings = [];
-    const masterHoldings = master.holdings || [];
-
-    const snapshotBefore = JSON.stringify(slave.holdings);
-
-    const slaveByKey = new Map();
-    slave.holdings.forEach(h => slaveByKey.set(_holdingKey(h), h));
-    const masterKeys = new Set(masterHoldings.map(_holdingKey));
-
-    masterHoldings.forEach(mh => {
-      const key = _holdingKey(mh);
-      const sh = slaveByKey.get(key);
-      if (sh) {
-        if (sh.syncedFromMaster) {
-          const id = sh.id;
-          Object.keys(sh).forEach(k => { if (k !== 'id') delete sh[k]; });
-          Object.assign(sh, JSON.parse(JSON.stringify(mh)), { id, syncedFromMaster: true });
-        }
-      } else {
-        const cloned = JSON.parse(JSON.stringify(mh));
-        cloned.id = Date.now().toString() + Math.random().toString(36).slice(2,6);
-        cloned.syncedFromMaster = true;
-        slave.holdings.push(cloned);
-      }
-    });
-
-    slave.holdings = slave.holdings.filter(sh => {
-      if (!sh.syncedFromMaster) return true;
-      return masterKeys.has(_holdingKey(sh));
-    });
-
-    // 若當前正顯示 ian 帳戶,state 是它的 reference,直接更新 state
-    if (state && currentAccountId === slave.id) {
-      state.holdings = slave.holdings;
+    let changed = false;
+    for (const p of SYNC_PAIRS) {
+      if (_syncPair(p.master, p.slave, p.adopt)) changed = true;
     }
-
-    return JSON.stringify(slave.holdings) !== snapshotBefore;
+    return changed;
   } finally {
     _isSyncing = false;
   }
@@ -1556,10 +1571,10 @@ function saveAllAccounts() {
   const idx = accounts.findIndex(a => a.id === currentAccountId);
   if (idx >= 0) accounts[idx] = { ...state, id: currentAccountId, name: accounts[idx].name };
 
-  // 若當前帳戶是強強滾,自動同步至 ian
+  // 若當前帳戶是任一同步對的 master（強強滾 或 ian）→ 跑鏈式同步（強強滾→ian→俊）
   if (!_isSyncing) {
     const cur = accounts[idx];
-    if (cur && cur.name === SYNC_MASTER_NAME) {
+    if (cur && SYNC_PAIRS.some(p => p.master === cur.name)) {
       syncMasterToSlave();
     }
   }
@@ -3131,12 +3146,15 @@ function updateCost(id, val) {
   h.manualCost = null;
   save(); renderPortfolio();
 }
-// 在 ian(slave)編輯「同步來的」持倉時，自動把該檔解除同步 → 改了就留住，不再被強強滾蓋回。
+// 在 slave(ian / 俊)編輯「同步來的」持倉時，自動把該檔解除同步 → 改了就留住，不再被上游帳戶蓋回。
 // （master 端持倉沒有 syncedFromMaster 旗標，所以這裡只會對 slave 的同步持倉生效。）
 function detachFromSync(h) {
   if (h && h.syncedFromMaster) {
     h.syncedFromMaster = false;
-    toast(`「${h.name || h.ticker}」已設為此帳戶獨立，之後不再跟${SYNC_MASTER_NAME}同步`);
+    const cur = accounts.find(a => a.id === currentAccountId);
+    const pair = cur && SYNC_PAIRS.find(p => p.slave === cur.name);
+    const masterName = pair ? pair.master : SYNC_MASTER_NAME;
+    toast(`「${h.name || h.ticker}」已設為此帳戶獨立，之後不再跟${masterName}同步`);
   }
 }
 function updateTradeType(id, val) {
