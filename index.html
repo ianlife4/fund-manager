@@ -1231,7 +1231,8 @@ document.addEventListener('DOMContentLoaded', () => {
       <span class="section-title">多帳戶淨值績效比較</span>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin:0 0 10px 2px;">點帳戶加入 ＋／移除比較，每個帳戶一張獨立淨值曲線。有快照用快照淨值，否則用「入金＋已實現」確定淨值。</div>
-    <div id="compareChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;"></div>
+    <div id="compareChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+    <div id="compareControls" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;"></div>
     <div id="compareGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;"></div>
   </div>
 
@@ -3442,6 +3443,12 @@ function _linkAutoRealized(c) {
 // ════════════════════════════════════════════
 let compareSelected = null;          // Set<accountId>；null = 尚未初始化(預設全選)
 let _compareCharts = [];
+let compareView = 'grid';            // 'grid'(格狀) | 'overlay'(疊圖)
+let compareBase = 'abs';             // 'abs'(絕對淨值) | 'base100'(基準100正規化)
+let compareSort = 'default';         // 'default'(帳戶順序) | 'return'(報酬率高→低)
+function setCompareView(v){ compareView = v; renderCompare(); }
+function setCompareBase(v){ compareBase = v; renderCompare(); }
+function setCompareSort(v){ compareSort = v; renderCompare(); }
 
 // 取帳戶最新資料：當前帳戶用 live state(可能有尚未存回 accounts 的編輯)，其餘用 accounts
 function _acctData(acct) {
@@ -3493,54 +3500,117 @@ function renderCompare() {
     }).join('');
   }
 
+  // 控制列：格狀/疊圖、絕對/基準100、排序
+  const ctrlEl = document.getElementById('compareControls');
+  if (ctrlEl) {
+    const seg = (cur, fn, opts) => `<div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">` +
+      opts.map(o => `<button onclick="${fn}('${o.v}')" style="padding:6px 12px;border:none;background:${cur===o.v?'var(--gold)':'transparent'};color:${cur===o.v?'#1a1a1a':'var(--text-dim)'};font-size:12px;cursor:pointer;font-family:var(--sans);font-weight:${cur===o.v?'700':'400'};">${o.t}</button>`).join('') + `</div>`;
+    ctrlEl.innerHTML =
+      `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">檢視</span>${seg(compareView,'setCompareView',[{v:'grid',t:'格狀'},{v:'overlay',t:'疊圖'}])}</div>` +
+      `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">刻度</span>${seg(compareBase,'setCompareBase',[{v:'abs',t:'絕對淨值'},{v:'base100',t:'基準100'}])}</div>` +
+      `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">排序</span>${seg(compareSort,'setCompareSort',[{v:'default',t:'帳戶順序'},{v:'return',t:'報酬率'}])}</div>`;
+  }
+
   // 清掉舊圖
   _compareCharts.forEach(c => { try { c.destroy(); } catch (e) {} });
   _compareCharts = [];
 
   const grid = document.getElementById('compareGrid');
   if (!grid) return;
-  const sel = accounts.filter(a => compareSelected.has(a.id));
-  if (sel.length === 0) {
-    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📊</div>請在上方點選要比較的帳戶</div>`;
+  const selAccts = accounts.filter(a => compareSelected.has(a.id));
+  if (selAccts.length === 0) {
+    grid.style.display = 'block';
+    grid.innerHTML = `<div class="empty"><div class="empty-icon">📊</div>請在上方點選要比較的帳戶</div>`;
     return;
   }
 
-  grid.innerHTML = sel.map(a => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 14px 8px;">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-        <span style="font-weight:700;font-size:15px;color:var(--text);">${a.name}</span>
-        <span id="cmpVal_${a.id}" style="font-family:var(--mono);font-size:13px;"></span>
-      </div>
-      <div id="cmpMeta_${a.id}" style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">&nbsp;</div>
-      <div style="height:170px;position:relative;"><canvas id="cmpChart_${a.id}"></canvas></div>
-    </div>`).join('');
-
-  sel.forEach(a => {
+  // 每帳戶序列 + 報酬率(報酬率一律用原始淨值算,不受基準100影響)
+  const stats = selAccts.map(a => {
+    const idx = accounts.findIndex(x => x.id === a.id);
+    const col = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
     const { series, basis } = accountNavSeries(a);
-    const valEl = document.getElementById('cmpVal_' + a.id);
-    const metaEl = document.getElementById('cmpMeta_' + a.id);
-    if (!series || series.length === 0) {
-      if (valEl) { valEl.textContent = '無資料'; valEl.style.color = 'var(--text-muted)'; }
-      return;
-    }
+    if (!series || series.length === 0) return { a, col, series: [], basis, ret: null, last: null };
     const first = series[0].nav, last = series[series.length - 1].nav;
     const ret = first ? (last - first) / Math.abs(first) * 100 : 0;
-    if (valEl) valEl.innerHTML = `${fmtMoney(last)} <span class="${signClass(ret)}" style="font-size:12px;">${fmtPct(ret)}</span>`;
-    if (metaEl) metaEl.textContent = `${series.length} 點 · ${basis === 'snap' ? '快照淨值' : '確定淨值(入金+已實現)'} · ${series[0].date}~${series[series.length-1].date}`;
+    return { a, col, series, basis, ret, last };
+  });
 
-    const up = ret >= 0;
+  // 排序：報酬率高→低(無資料排最後)
+  if (compareSort === 'return') {
+    stats.sort((x, y) => (y.ret === null ? -Infinity : y.ret) - (x.ret === null ? -Infinity : x.ret));
+  }
+
+  // 基準100：每條線以自身第一個正值 rebase 成 100
+  const plotOf = s => {
+    if (compareBase !== 'base100') return s.series.map(p => p.nav);
+    const b = ((s.series.find(p => p.nav > 0) || s.series[0] || {}).nav) || 1;
+    return s.series.map(p => p.nav / b * 100);
+  };
+  const yFmt = v => compareBase === 'base100' ? fmt(v, 0) : (Math.abs(v) >= 10000 ? fmt(v / 10000) + '萬' : fmt(v));
+  const vFmt = v => compareBase === 'base100' ? v.toFixed(1) : fmtMoney(v);
+
+  // ── 疊圖模式：一張圖多條線(用各帳戶顏色) ──
+  if (compareView === 'overlay') {
+    grid.style.display = 'block';
+    grid.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">${compareBase==='base100'?'基準100：每個帳戶起點拉齊為 100，比純績效走勢':'絕對淨值疊圖'}</div>
+        <div style="height:440px;position:relative;"><canvas id="cmpOverlay"></canvas></div>
+      </div>`;
+    const allDates = [...new Set(stats.flatMap(s => s.series.map(p => p.date)))].sort();
+    const datasets = stats.filter(s => s.series.length).map(s => {
+      const m = new Map(); const pv = plotOf(s); s.series.forEach((p, i) => m.set(p.date, pv[i]));
+      return {
+        label: s.a.name + (s.ret != null ? `　${fmtPct(s.ret)}` : ''),
+        data: allDates.map(d => m.has(d) ? m.get(d) : null),
+        borderColor: s.col, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, spanGaps: true, tension: 0.25,
+      };
+    });
+    const ctx = document.getElementById('cmpOverlay').getContext('2d');
+    _compareCharts.push(new Chart(ctx, {
+      type: 'line',
+      data: { labels: allDates, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, labels: { color: '#c9ccd6', font: { size: 12 }, usePointStyle: true, pointStyle: 'line' } },
+          tooltip: { callbacks: { label: c => ` ${c.dataset.label.split('　')[0]}：${vFmt(c.raw)}` }, backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0' }
+        },
+        scales: {
+          x: { grid: { color: 'rgba(26,29,37,0.5)' }, ticks: { color: '#7a8099', font: { size: 10 }, maxTicksLimit: 10 } },
+          y: { position: 'right', grid: { color: 'rgba(26,29,37,0.5)' }, ticks: { color: '#7a8099', font: { size: 10 }, callback: yFmt } }
+        }
+      }
+    }));
+    return;
+  }
+
+  // ── 格狀模式：小倍數(每帳戶一張,漲紅跌綠) ──
+  grid.style.display = 'grid';
+  grid.innerHTML = stats.map(s => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 14px 8px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
+        <span style="font-weight:700;font-size:15px;color:var(--text);">${s.a.name}</span>
+        <span style="font-family:var(--mono);font-size:13px;">${s.series.length ? `${fmtMoney(s.last)} <span class="${signClass(s.ret)}" style="font-size:12px;">${fmtPct(s.ret)}</span>` : '<span style="color:var(--text-muted)">無資料</span>'}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">${s.series.length ? `${s.series.length} 點 · ${s.basis==='snap'?'快照淨值':'確定淨值(入金+已實現)'} · ${s.series[0].date}~${s.series[s.series.length-1].date}` : '&nbsp;'}</div>
+      <div style="height:170px;position:relative;"><canvas id="cmpChart_${s.a.id}"></canvas></div>
+    </div>`).join('');
+
+  stats.forEach(s => {
+    if (!s.series.length) return;
+    const up = s.ret >= 0;
     const line = up ? '#f26e6e' : '#3ecf8e';   // 台股慣例：漲紅跌綠
-    const ctx = document.getElementById('cmpChart_' + a.id).getContext('2d');
+    const ctx = document.getElementById('cmpChart_' + s.a.id).getContext('2d');
     const grad = ctx.createLinearGradient(0, 0, 0, 170);
     grad.addColorStop(0, line + '33'); grad.addColorStop(1, line + '00');
     _compareCharts.push(new Chart(ctx, {
       type: 'line',
-      data: { labels: series.map(p => p.date), datasets: [{ data: series.map(p => p.nav), borderColor: line, backgroundColor: grad, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.25 }] },
+      data: { labels: s.series.map(p => p.date), datasets: [{ data: plotOf(s), borderColor: line, backgroundColor: grad, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.25 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { title: items => items[0].label, label: c => ' ' + fmtMoney(c.raw) }, backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0' } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { title: items => items[0].label, label: c => ' ' + vFmt(c.raw) }, backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0' } },
         scales: {
           x: { display: false },
-          y: { position: 'right', ticks: { color: '#7a8099', font: { size: 9 }, maxTicksLimit: 4, callback: v => Math.abs(v) >= 10000 ? fmt(v / 10000) + '萬' : fmt(v) }, grid: { color: 'rgba(26,29,37,0.5)' } }
+          y: { position: 'right', ticks: { color: '#7a8099', font: { size: 9 }, maxTicksLimit: 4, callback: yFmt }, grid: { color: 'rgba(26,29,37,0.5)' } }
         }
       }
     }));
