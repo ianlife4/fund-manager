@@ -995,6 +995,10 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="section-header">
         <span class="section-title">淨值績效曲線</span>
         <div style="display:flex;gap:8px;align-items:center;">
+          <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;" title="快照淨值(含未實現市值)，與『帳戶比較』切到『真實(快照)』時同一條">
+            <input type="checkbox" id="showRealNavChk" onchange="toggleRealNavLine(this.checked)" style="cursor:pointer;" />
+            <span style="color:#26c6da">真實淨值</span>
+          </label>
           <label style="font-size:11px;color:var(--text-dim)">線條顏色</label>
           <input type="color" id="navChartColor" value="#c9a84c"
             style="width:28px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;"
@@ -3643,6 +3647,13 @@ function updateNavChartColor(color) {
   save(); renderPerformance();
 }
 
+// 真實淨值(快照含未實現市值)青線：預設關閉，勾選才顯示（記在該帳戶設定）
+function toggleRealNavLine(on) {
+  state.settings = state.settings || {};
+  state.settings.showRealNav = !!on;
+  save(); renderPerformance();
+}
+
 function renderPerformance() {
   // 先清理：所有不是「明確手動」的今天快照一律刪除
   const __today = new Date().toISOString().slice(0,10);
@@ -3901,6 +3912,8 @@ function renderPerformance() {
   const navColor = state.settings?.navChartColor || '#c9a84c';
   const colorPicker = document.getElementById('navChartColor');
   if (colorPicker) colorPicker.value = navColor;
+  const realChk = document.getElementById('showRealNavChk');
+  if (realChk) realChk.checked = state.settings?.showRealNav === true;
 
   if (data.length > 0) {
     const ctx1 = document.getElementById('navChart').getContext('2d');
@@ -3916,11 +3929,12 @@ function renderPerformance() {
       return null; // 其餘不顯示
     });
 
-    // 真實淨值(含市值)：用快照 nav 對齊 chart 日期 → 與「帳戶比較」頁同一條線(青色)
+    // 真實淨值(含市值)：用快照 nav 對齊 chart 日期 → 與「帳戶比較」切『真實(快照)』同一條線(青色)
+    // 預設不畫，勾選「真實淨值」才顯示
     const _snapByDate = {};
     (state.snapshots || []).forEach(s => { if (s && s.date && typeof s.nav === 'number') _snapByDate[s.date] = s.nav; });
     const realNavData = data.map(pt => _snapByDate[pt.date] != null ? _snapByDate[pt.date] : null);
-    const hasRealNav = realNavData.filter(v => v != null).length >= 2;
+    const hasRealNav = state.settings?.showRealNav === true && realNavData.filter(v => v != null).length >= 2;
 
     const gradConfirmed = ctx1.createLinearGradient(0,0,0,320);
     gradConfirmed.addColorStop(0, navColor + '22');
