@@ -1230,7 +1230,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="section-header" style="margin-bottom:6px;">
       <span class="section-title">多帳戶淨值績效比較</span>
     </div>
-    <div style="font-size:12px;color:var(--text-dim);margin:0 0 10px 2px;">點帳戶加入 ＋／移除比較，每個帳戶一張獨立淨值曲線。有快照用快照淨值，否則用「入金＋已實現」確定淨值。</div>
+    <div style="font-size:12px;color:var(--text-dim);margin:0 0 10px 2px;">點帳戶加入 ＋／移除比較。曲線＝<strong style="color:var(--text)">真實淨值</strong>（快照含未實現市值）。各帳戶「績效曲線」頁也加了同一條青色「真實淨值」線，兩邊對得起來。</div>
     <div id="compareChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
     <div id="compareControls" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;"></div>
     <div id="compareGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;"></div>
@@ -3455,7 +3455,8 @@ function _acctData(acct) {
   return (state && acct.id === currentAccountId) ? state : acct;
 }
 
-// 單一帳戶淨值序列：有 ≥2 筆快照 → 用快照淨值(含市值);否則用「入金＋已實現−出金」確定淨值
+// 單一帳戶淨值序列 —— 「真實淨值」= 每筆快照的 nav(含未實現市值)。績效頁也會補畫同一條。
+//   有 ≥2 筆快照 → 用快照 nav；否則 fallback「已確定淨值(入金+已實現)」。
 function accountNavSeries(acct) {
   const a = _acctData(acct);
   const snaps = [...(a.snapshots || [])]
@@ -3464,8 +3465,7 @@ function accountNavSeries(acct) {
   if (snaps.length >= 2) {
     return { series: snaps.map(s => ({ date: s.date, nav: s.nav })), basis: 'snap' };
   }
-  const cf = [...(a.cashflows || [])]
-    .filter(c => c && c.date)
+  const cf = [...(a.cashflows || [])].filter(c => c && c.date)
     .sort((x, y) => x.date.localeCompare(y.date) || ((x.id || '') + '').localeCompare((y.id || '') + ''));
   const dates = [...new Set(cf.map(c => c.date))].sort();
   const series = dates.map(date => {
@@ -3591,7 +3591,7 @@ function renderCompare() {
         <span style="font-weight:700;font-size:15px;color:var(--text);">${s.a.name}</span>
         <span style="font-family:var(--mono);font-size:13px;">${s.series.length ? `${fmtMoney(s.last)} <span class="${signClass(s.ret)}" style="font-size:12px;">${fmtPct(s.ret)}</span>` : '<span style="color:var(--text-muted)">無資料</span>'}</span>
       </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">${s.series.length ? `${s.series.length} 點 · ${s.basis==='snap'?'快照淨值':'確定淨值(入金+已實現)'} · ${s.series[0].date}~${s.series[s.series.length-1].date}` : '&nbsp;'}</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">${s.series.length ? `${s.series.length} 點 · ${s.basis==='snap'?'真實淨值(快照)':'確定淨值(入金+已實現)'} · ${s.series[0].date}~${s.series[s.series.length-1].date}` : '&nbsp;'}</div>
       <div style="height:170px;position:relative;"><canvas id="cmpChart_${s.a.id}"></canvas></div>
     </div>`).join('');
 
@@ -3903,6 +3903,12 @@ function renderPerformance() {
       return null; // 其餘不顯示
     });
 
+    // 真實淨值(含市值)：用快照 nav 對齊 chart 日期 → 與「帳戶比較」頁同一條線(青色)
+    const _snapByDate = {};
+    (state.snapshots || []).forEach(s => { if (s && s.date && typeof s.nav === 'number') _snapByDate[s.date] = s.nav; });
+    const realNavData = data.map(pt => _snapByDate[pt.date] != null ? _snapByDate[pt.date] : null);
+    const hasRealNav = realNavData.filter(v => v != null).length >= 2;
+
     const gradConfirmed = ctx1.createLinearGradient(0,0,0,320);
     gradConfirmed.addColorStop(0, navColor + '22');
     gradConfirmed.addColorStop(1, navColor + '00');
@@ -3948,6 +3954,20 @@ function renderPerformance() {
             tension: 0.3,
             order: 1,
           },
+          ...(hasRealNav ? [{
+            label: '真實淨值（含未實現市值·同帳戶比較）',
+            data: realNavData,
+            borderColor: '#26c6da',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [3, 3],
+            pointRadius: 2,
+            pointBackgroundColor: '#26c6da',
+            fill: false,
+            tension: 0.3,
+            spanGaps: true,
+            order: 2,
+          }] : []),
           {
             label: `未實現損益延伸（${fmtMoney(unrealizedPnL)}）`,
             data: topData,
