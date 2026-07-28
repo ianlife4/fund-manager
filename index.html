@@ -1580,6 +1580,8 @@ function _syncPair(masterName, slaveName, mode) {
   const slaveByKey = new Map();
   slave.holdings.forEach(h => slaveByKey.set(_holdingKey(h), h));
   const masterKeys = new Set(masterHoldings.map(_holdingKey));
+  // 墓碑：slave 端主動刪掉的同步持倉 → 不再被 master 加回來（否則刪了會一直復原）
+  const tomb = new Set(slave.deletedSyncKeys || []);
 
   masterHoldings.forEach(mh => {
     const key = _holdingKey(mh);
@@ -1590,13 +1592,18 @@ function _syncPair(masterName, slaveName, mode) {
         Object.keys(sh).forEach(k => { if (k !== 'id') delete sh[k]; });
         Object.assign(sh, JSON.parse(JSON.stringify(mh)), { id, syncedFromMaster: true });
       }
-    } else {
+    } else if (!tomb.has(key)) {
       const cloned = JSON.parse(JSON.stringify(mh));
       cloned.id = Date.now().toString() + Math.random().toString(36).slice(2,6);
       cloned.syncedFromMaster = true;
       slave.holdings.push(cloned);
     }
   });
+
+  // master 已經沒有的 key → 墓碑失效（日後 master 重新加回時視為新標的，可正常同步進來）
+  if (slave.deletedSyncKeys && slave.deletedSyncKeys.length) {
+    slave.deletedSyncKeys = slave.deletedSyncKeys.filter(k => masterKeys.has(k));
+  }
 
   slave.holdings = slave.holdings.filter(sh => {
     if (!sh.syncedFromMaster) return true;       // 自己的 / 已 detach → 保留
@@ -3305,8 +3312,51 @@ function toggleLock(id, field) {
   save(); renderPortfolio();
 }
 
+// 從帳戶移除某檔，並沿同步鏈往上處理，避免下次同步又被加回來：
+//   merge  slave(ian)：記墓碑 deletedSyncKeys → 強強滾不再補回
+//   mirror slave(俊) ：自己刪 + 遞迴往上游(ian)刪（否則 強強滾→ian→俊 會整條把它送回來）
+function _removeHoldingFromAccount(acct, key) {
+  if (!acct) return;
+  acct.holdings = (acct.holdings || []).filter(x => _holdingKey(x) !== key);
+  const up = SYNC_PAIRS.find(p => p.slave === acct.name);
+  if (!up) return;
+  if (up.mode === 'merge') {
+    acct.deletedSyncKeys = acct.deletedSyncKeys || [];
+    if (!acct.deletedSyncKeys.includes(key)) acct.deletedSyncKeys.push(key);
+  } else {
+    _removeHoldingFromAccount(accounts.find(a => a.name === up.master), key);
+  }
+}
+
 function deleteHolding(id) {
-  state.holdings = state.holdings.filter(h => h.id !== id);
+  const h = (state.holdings || []).find(x => x.id === id);
+  const cur = accounts.find(a => a.id === currentAccountId) || state;
+  const pair = cur && SYNC_PAIRS.find(p => p.slave === cur.name);
+
+  // 在 slave 帳戶刪「同步來的」持倉 → 若不處理，下次同步會被 master 加回來（看起來像「刪了會復原」）
+  if (h && pair) {
+    const key = _holdingKey(h);
+    if (pair.mode === 'mirror') {
+      // 俊：完全鏡射 master，只在這裡刪一定會被加回 → 確認後連上游一起刪
+      if (!confirm(`「${cur.name}」的持倉完全同步「${pair.master}」，只在這裡刪會被同步加回來。\n\n要一併從「${pair.master}」刪除「${h.name || h.ticker}」嗎？（兩個帳戶都會移除）`)) return;
+      _removeHoldingFromAccount(cur, key);
+      if (state && state !== cur) state.holdings = cur.holdings;
+      syncMasterToSlave();      // 讓整條鏈立刻收斂
+      save(); renderPortfolio();
+      toast(`已從「${pair.master}」與「${cur.name}」刪除`);
+      return;
+    }
+    if (h.syncedFromMaster) {
+      // ian：記墓碑，之後 master 不再把它加回來
+      _removeHoldingFromAccount(cur, key);
+      if (state && state !== cur) state.holdings = cur.holdings;
+      save(); renderPortfolio();
+      toast(`已刪除（此帳戶不再從「${pair.master}」同步這檔）`);
+      return;
+    }
+  }
+
+  state.holdings = state.holdings.filter(x => x.id !== id);
   save(); renderPortfolio();
   toast('已刪除持倉');
 }
