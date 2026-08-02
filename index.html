@@ -679,6 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </label>
             <button class="btn btn-sm" onclick="saveAllAccountsSnapshot()" style="font-size:11px;">＋ 記錄所有帳戶</button>
             <button class="btn btn-gold btn-sm" onclick="saveWeeklySnapshot()">＋ 記錄本週</button>
+            <button class="btn btn-outline btn-sm" onclick="cleanupSuspectSnapshots()" style="font-size:11px;" title="刪掉『該日期沒有任何出入金/獲利分配』的快照(多半是舊版每天開App自動產生的)">🧹 清理可疑快照</button>
           </div>
         </div>
         <div class="section-body">
@@ -2223,6 +2224,27 @@ function saveAllAccountsSnapshot() {
   save();
   refreshAllViews();
   toast(`✓ 已記錄 ${successCount} 個帳戶的今日快照`);
+}
+
+/* 🧹 清理可疑快照（當前帳戶）：
+   「可疑」= 該日期沒有任何出入金、也沒有獲利分配 → 多半是舊版「每天開 App 自動記快照」灌出來的點。
+   先列清單 confirm，刪除前把原始快照備份到 localStorage（fundMgr_snapBackup_…）。 */
+function cleanupSuspectSnapshots() {
+  const snaps = state.snapshots || [];
+  if (!snaps.length) { toast('此帳戶沒有快照'); return; }
+  const cfDates = new Set((state.cashflows || []).map(c => c.date));
+  const distDates = new Set((state.profitDists || []).map(d => d.date));
+  const suspects = snaps
+    .filter(s => !cfDates.has(s.date) && !distDates.has(s.date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!suspects.length) { toast('沒有可疑快照：每筆快照的日期都有對應出入金或獲利分配 ✓'); return; }
+  const list = suspects.map(s => `  ${s.date}　${fmtMoney(s.nav)}`).join('\n');
+  if (!confirm(`「${state.settings?.fundName || '此帳戶'}」找到 ${suspects.length} 筆可疑快照（該日期沒有任何出入金／獲利分配，多半是舊版每天開 App 自動產生的）：\n\n${list}\n\n確定刪除？刪除後這些日期就不會出現在曲線上。\n（原始快照會先備份到本機，弄錯可救回）\n\n⚠ 若清單裡有你「手動記的」快照，請按取消，改用快照列表逐筆刪。`)) return;
+  try { localStorage.setItem('fundMgr_snapBackup_' + currentAccountId + '_' + Date.now(), JSON.stringify(snaps)); } catch (e) {}
+  const del = new Set(suspects.map(s => s.id));
+  state.snapshots = snaps.filter(s => !del.has(s.id));
+  save(); refreshAllViews();
+  toast(`已刪除 ${suspects.length} 筆可疑快照 ✓（備份已存本機）`);
 }
 
 /**
