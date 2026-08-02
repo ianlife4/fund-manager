@@ -4333,10 +4333,10 @@ function renderAllocation() {
         <span class="legend-pct">${w.toFixed(1)}%</span>
       </li>`;
     }),
-    showCash ? `<li class="legend-item">
+    showCash ? `<li class="legend-item" ${cash < 0 ? `title="現金為負：出入金記錄的淨入金 < 持倉付出成本，圓餅無法畫負值。請補記入金，或屬融資/代操未記入金的正常情況"` : ''}>
       <span class="legend-dot" style="background:${CASH_COLOR}"></span>
       <span class="legend-name">現金</span>
-      <span class="legend-pct" style="color:${CASH_COLOR}">${totalForPct===0?'0.0':(pieCashVal/totalForPct*100).toFixed(1)}%</span>
+      <span class="legend-pct" style="color:${CASH_COLOR}">${cash < 0 ? '⚠ ' + fmtMoney(cash) : (totalForPct===0?'0.0':(pieCashVal/totalForPct*100).toFixed(1)) + '%'}</span>
     </li>` : ''
   ].join('');
 
@@ -4351,18 +4351,21 @@ function renderAllocation() {
   const sectorLabels = sectors.map(s => s[0]);
   const sectorData   = sectors.map(s => s[1]);
   const sectorColors = sectors.map(s => getLabelColor(s[0]));
+  // 分母用「實際畫在圖上的值」加總。舊寫法用 total(=市值+現金)，現金為大負數時
+  // 分母被拉小 → 佔比爆表(例:科技 291.4%)
+  const sectorTotal = sectorData.reduce((s,v) => s + Math.max(v,0), 0);
 
   sectorPieInstance = new Chart(document.getElementById('sectorPieChart'), {
     type: 'doughnut',
     data: { labels: sectorLabels, datasets: [{ data: sectorData, backgroundColor: sectorColors, borderWidth: 2, borderColor: '#111318', hoverOffset: 8 }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: {
-      callbacks: { label: ctx => ' ' + fmtMoney(ctx.raw) + ' (' + (totalForPct>0 ? (ctx.raw/totalForPct*100).toFixed(1) : 0) + '%)' },
+      callbacks: { label: ctx => ' ' + fmtMoney(ctx.raw) + ' (' + (sectorTotal>0 ? (ctx.raw/sectorTotal*100).toFixed(1) : 0) + '%)' },
       backgroundColor: '#191c24', borderColor: '#252933', borderWidth: 1, titleColor: '#7a8099', bodyColor: '#e8eaf0',
     }}, cutout: '60%' }
   });
 
   document.getElementById('sectorLegend').innerHTML = sectors.map((s,i) => {
-    const w = total === 0 ? 0 : (s[1]/total*100);
+    const w = sectorTotal === 0 ? 0 : (s[1]/sectorTotal*100);
     return `<li class="legend-item">
       <span class="legend-dot" style="background:${sectorColors[i]}"></span>
       <span class="legend-name">${s[0]}</span>
@@ -4371,8 +4374,10 @@ function renderAllocation() {
   }).join('');
 
   // ── 集中度分析表：同代號合併，展開顯示各部位
+  // 分母同樣避開負現金：持倉(正值)+正現金
+  const tableTotal = aggregated.reduce((s,a) => s + Math.max(a.value,0), 0) + cashVal;
   const stockRows = aggregated.map((a, i) => {
-    const w = total === 0 ? 0 : (a.value/total*100);
+    const w = tableTotal === 0 ? 0 : (a.value/tableTotal*100);
     const subs = holdings.filter(h => (h.name || h.ticker) === a.label);
     const sector = subs[0]?.sector || '—';
     const tradeTypes = subs.map(h => h.tradeType || '現股').join(' + ');
@@ -4408,7 +4413,7 @@ function renderAllocation() {
   const totalPaidAll = totalCost();
   const settlement = netDep - totalPaidAll;
   const settlementClass = settlement >= 0 ? 'positive' : 'negative';
-  const cashW = total === 0 ? 0 : (cashVal/total*100);
+  const cashW = tableTotal === 0 ? 0 : (cashVal/tableTotal*100);
 
   // 付出成本合計（有手動值用手動值，否則用自動計算值）
   const totalCostAll = holdings.reduce((s, h) => {
@@ -4451,7 +4456,7 @@ function renderAllocation() {
     <td></td>
     <td style="color:var(--gold);font-weight:700">${fmtMoney(totalMV)}</td>
     <td style="color:var(--text-dim);font-weight:700">${fmtMoney(totalCostAll)}</td>
-    <td style="color:var(--gold);font-weight:700">${total > 0 ? (totalMV/total*100).toFixed(2) : 0}%</td>
+    <td style="color:var(--gold);font-weight:700">${tableTotal > 0 ? (totalMV/tableTotal*100).toFixed(2) : 0}%</td>
     <td></td>
   </tr>`;
 
