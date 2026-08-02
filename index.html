@@ -1202,12 +1202,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="table-wrap">
           <table>
             <thead>
-              <tr>
+              <tr id="dist_th_row">
                 <th>期間</th>
                 <th>結算日期</th>
                 <th>本期獲利</th>
                 <th>協議池</th>
-                <th id="dist_th_cols"></th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -5053,11 +5052,12 @@ function renderProfit() {
   // History table
   const tbody = document.getElementById('distHistoryTbody');
   if (dists.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div>尚無分配紀錄</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${5 + (investors.length || 1)}"><div class="empty"><div class="empty-icon">📋</div>尚無分配紀錄</div></td></tr>`;
   } else {
-    // Build dynamic headers
-    const thCols = document.getElementById('dist_th_cols');
-    if (thCols) thCols.outerHTML = investors.map(inv => `<th>${inv.name} 分得</th>`).join('') + '<th>操作</th>';
+    // Build dynamic headers（整列重建：outerHTML 換掉會弄丟 id，導致表頭卡在第一次 render 的投資人）
+    const thRow = document.getElementById('dist_th_row');
+    if (thRow) thRow.innerHTML = '<th>期間</th><th>結算日期</th><th>本期獲利</th><th>協議池</th>'
+      + investors.map(inv => `<th>${inv.name} 分得</th>`).join('') + '<th>操作</th>';
 
     // 依日期排序（新到舊顯示）
     const sortedDists = [...dists].sort((a, b) => a.date.localeCompare(b.date));
