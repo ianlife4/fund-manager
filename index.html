@@ -1886,8 +1886,10 @@ function marginLoanTotal() {
     return s + Math.round(totalAmt * (h.marginRate || 0.6));
   }, 0);
 }
-// 基金總市值 = 持倉市值 + 現金餘額 - 融資借款（券商欠款是負債，不能算進淨值）
-function fundTotalNav() { return totalMarketValue() + cashBalance() - marginLoanTotal(); }
+// 基金總淨值 = 持倉市值 + 現金餘額 − 融資借款（券商欠款是負債）− 融資平倉成本
+// 最後一項與 totalPnL() 同源（賣出手續費+證交稅+融資利息，對齊券商「損益試算」）。
+// 少扣會讓「基金總淨值 ≠ 淨投入資金 + 未實現損益」，績效頁三張卡對不起來。
+function fundTotalNav() { return totalMarketValue() + cashBalance() - marginLoanTotal() - totalMarginNetCost(); }
 
 // 單位淨值 / 時間加權報酬(TWR)：把入金/出金當成「以當時單位淨值買/賣單位」，
 // 單位淨值只反映操作績效、不被金流墊高（基準 100）。法人標準算法。
@@ -3881,8 +3883,7 @@ function renderPerformance() {
   // ── 淨投入資金（入金+已實現−出金）
   const netDep = netDeposited();
 
-  // ── 總淨值 = 淨投入 + 未實現
-  const totalNav = netDep + unrealizedPnL;
+  // 註：總淨值一律用 fundTotalNav()（= 淨投入 + 未實現，兩者現已恆等），不另外算一份避免定義分歧
 
   // ── 第一筆入金（累計報酬率分母）
   const firstDeposit = [...(state.cashflows||[])]
