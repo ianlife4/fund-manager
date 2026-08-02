@@ -1402,12 +1402,20 @@ function getCurrentAccount() {
   return accounts.find(a => a.id === currentAccountId) || accounts[0];
 }
 
+// 標題（左上基金名）與當前帳戶同步。切帳戶時若沒更新，標題會停在上一個帳戶，
+// 造成「標題寫 A、內容其實是 B」的錯配畫面（等 Firebase 回來 refreshAllViews 才跳對）。
+function syncFundTitle() {
+  const el = document.getElementById('fundNameDisplay');
+  if (el) el.textContent = state?.settings?.fundName || state?.name || '我的基金';
+}
+
 function switchAccount(id) {
   const visible = getVisibleAccounts();
   if (!visible.find(a => a.id === id)) return;
   currentAccountId = id;
   localStorage.setItem('fundMgr_currentAcct', id);
   state = getCurrentAccount();
+  syncFundTitle();
   renderAccountBar();
   renderPage(document.querySelector('.page.active')?.id?.replace('page-','') || 'overview');
 }
@@ -1424,6 +1432,7 @@ function addAccount() {
   state = acct;
   if (acct.viewPassword) sessionStorage.setItem('fundMgr_unlocked_' + acct.id, '1');
   saveAllAccounts();
+  syncFundTitle();
   renderAccountBar();
   renderPage('overview');
 }
@@ -1433,7 +1442,7 @@ function renameAccount(id, newName) {
   if (acct) { acct.name = newName; acct.settings.fundName = newName; }
   saveAllAccounts();
   renderAccountBar();
-  document.getElementById('fundNameDisplay').textContent = state.settings?.fundName || '我的基金';
+  syncFundTitle();
 }
 
 function closeAccount(id) {
@@ -1445,6 +1454,7 @@ function closeAccount(id) {
     state = accounts[0];
   }
   saveAllAccounts();
+  syncFundTitle();
   renderAccountBar();
   renderPage('overview');
 }
@@ -4270,10 +4280,11 @@ function renderAllocation() {
       if (h.tradeType === '融資') return Math.round(totalAmt * (1 - (h.marginRate || 0.6)));
       return totalAmt;
     }
-    // market：市值（預設）
-    if (h.marketLocked && h.manualMarket != null) return h.manualMarket;
+    // market：市值（預設）—— 與 totalMarketValue() 同源，否則配置分析的佔比會跟總覽/持倉對不上
+    // （原本直接用 股數×現價，沒吃已鎖定的「預估收入 manualEst」，現價延遲/沒更新時就失真）
     if (h.tradeType === '可轉債') return (h.cost || 0) + (h.price || 0);
-    return h.shares * h.price;
+    return h.manualEst != null ? h.manualEst
+         : (h.manualMarket != null ? h.manualMarket : h.shares * h.price);
   };
 
   // ── sorted holdings and cashVal needed early
