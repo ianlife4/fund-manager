@@ -1000,6 +1000,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <input type="checkbox" id="showRealNavChk" onchange="toggleRealNavLine(this.checked)" style="cursor:pointer;" />
             <span style="color:#26c6da">真實淨值</span>
           </label>
+          <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;" title="把出金的錢加回曲線，看『沒領錢的話淨值會長怎樣』。上方 MDD／高水位／目前回吐 一律已還原出金。">
+            <input type="checkbox" id="restoreOutflowChk" onchange="toggleRestoreOutflow(this.checked)" style="cursor:pointer;" />
+            <span style="color:var(--gold)">還原出金</span>
+          </label>
           <label style="font-size:11px;color:var(--text-dim)">線條顏色</label>
           <input type="color" id="navChartColor" value="#c9a84c"
             style="width:28px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;"
@@ -3740,6 +3744,13 @@ function toggleRealNavLine(on) {
   save(); renderPerformance();
 }
 
+// 還原出金：把已領走的錢加回曲線，看「沒出金的話淨值會長怎樣」（記在該帳戶設定）
+function toggleRestoreOutflow(on) {
+  state.settings = state.settings || {};
+  state.settings.restoreOutflow = !!on;
+  save(); renderPerformance();
+}
+
 function renderPerformance() {
   // 先清理：所有不是「明確手動」的今天快照一律刪除
   const __today = new Date().toISOString().slice(0,10);
@@ -3941,6 +3952,12 @@ function renderPerformance() {
     expoEl.textContent = '—';
   }
 
+  // ── 還原出金：出金是「把錢領走」，不是虧損，不該被算成回撤。
+  //    還原後淨值(d) = 當時淨值(d) + 截至 d 的累計出金 → 曲線變成「沒領錢的話會長怎樣」。
+  const outEvents = (state.cashflows || []).filter(c => c.type === '出金');
+  const cumOutAt = (d) => outEvents.reduce((s, c) => (c.date <= d ? s + (c.amount || 0) : s), 0);
+  const totalOut = outEvents.reduce((s, c) => s + (c.amount || 0), 0);
+
   const noData = chartData.length === 0;
   if (noData) {
     ['perf_total','perf_high','perf_drawdown','perf_curDD'].forEach(id => {
@@ -3948,13 +3965,13 @@ function renderPerformance() {
     });
   } else {
     // 最高獲利 & MDD：以「真實淨值」（快照含未實現）為基準，而非僅確認淨值
-    // 建立 NAV 時序：所有快照 NAV + 當前 NAV
+    // 建立 NAV 時序：所有快照 NAV + 當前 NAV，並一律「還原出金」後才算高水位/回撤
     const navPoints = [...(state.snapshots || [])]
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(s => ({ date: s.date, nav: s.nav }));
     navPoints.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav() });
 
-    const navSeries = navPoints.map(p => p.nav);
+    const navSeries = navPoints.map(p => p.nav + cumOutAt(p.date));
     // 高水位錨定在「本金(firstDeposit)」：淨值還沒回本(< 本金)就不會假性顯示「創新高」，
     // 此時 目前回吐 = 離本金多遠(= −累計報酬率)；唯有淨值超過本金、再刷新才算真的創新高。
     const hwmFloor = firstDeposit > 1 ? firstDeposit : 0;
@@ -3975,7 +3992,8 @@ function renderPerformance() {
     document.getElementById('perf_high').textContent = fmtMoney(maxNav);
     document.getElementById('perf_drawdown').textContent = maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%';
     // 目前回吐 = 從歷史最高淨值(高水位)回落多少；創新高則顯示提示
-    const curNav = fundTotalNav();
+    // 高水位是「還原出金」後的，現值也要還原才同基準，否則出金當下會被誤判成大回吐
+    const curNav = fundTotalNav() + totalOut;
     const curDD = maxNav > 0 ? (maxNav - curNav) / maxNav * 100 : 0;
     const curDDEl = document.getElementById('perf_curDD');
     if (curDD < 0.05) {
@@ -3999,12 +4017,16 @@ function renderPerformance() {
   if (colorPicker) colorPicker.value = navColor;
   const realChk = document.getElementById('showRealNavChk');
   if (realChk) realChk.checked = state.settings?.showRealNav === true;
+  const restoreChk = document.getElementById('restoreOutflowChk');
+  if (restoreChk) restoreChk.checked = state.settings?.restoreOutflow === true;
 
   if (data.length > 0) {
     const ctx1 = document.getElementById('navChart').getContext('2d');
 
-    // 黃線：確定淨值序列
-    const confirmedData = buildConfirmed(data);
+    // 黃線：確定淨值序列（勾「還原出金」則把截至該日的累計出金加回去，看沒領錢會長怎樣）
+    const restoreOut = state.settings?.restoreOutflow === true;
+    const confirmedData = buildConfirmed(data)
+      .map((v, i) => restoreOut ? v + cumOutAt(data[i].date) : v);
 
     // 藍色虛線：倒數第二點跟黃線同高，最後一點加上未實現損益（原始設計）
     const lastIdx = confirmedData.length - 1;
@@ -4055,7 +4077,7 @@ function renderPerformance() {
         labels: data.map(s=>s.date),
         datasets: [
           {
-            label: '已確定淨值（入金＋已實現）',
+            label: restoreOut ? `已確定淨值（還原出金 +${fmtMoney(totalOut)}）` : '已確定淨值（入金＋已實現）',
             data: confirmedData,
             borderColor: navColor,
             backgroundColor: gradConfirmed,
