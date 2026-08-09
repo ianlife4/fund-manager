@@ -2633,10 +2633,9 @@ function renderPortfolio() {
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
         <td>${isCB
-          ? `<div><input type="number" value="${h.cbAvgPrice != null ? h.cbAvgPrice : ''}" step="0.01" placeholder="127" style="${inpFull}" ${onEnter} onchange="updateCbAvgPrice('${h.id}',this.value)" onblur="updateCbAvgPrice('${h.id}',this.value)" /><div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">轉債買進均價</div></div>`
+          ? `<div><input type="number" value="${h.cbAvgPrice != null ? h.cbAvgPrice : ''}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCbAvgPrice('${h.id}',this.value)" onblur="updateCbAvgPrice('${h.id}',this.value)" /><div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">轉債買進均價</div></div>`
           : `<div><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></div>`}</td>
-        <td>${isCB
-          ? `<div><input type="number" value="${h.cbClose != null ? h.cbClose : ''}" step="0.01" placeholder="129" style="${inpFull}" ${onEnter} onchange="updateCbClose('${h.id}',this.value)" onblur="updateCbClose('${h.id}',this.value)" /><div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">標的債券收盤價</div></div>`
+        <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>`
           : `<div><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />${(h.tradeType!=='期貨' && (h.price>10000 || h.cost>10000)) ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 股價異常,疑少小數點</div>` : ''}</div>`}</td>
         <td>${costCell}</td>
         <td>${incomeCell}</td>
@@ -3296,21 +3295,13 @@ function updateManualCost(id, val) {
   else h.manualCost = n;
   save(); renderPortfolio();
 }
-// 可轉債(CBAS)專用欄位：轉債買進均價、標的債券收盤價（純記錄，對照券商畫面用，不參與損益計算）
+// 可轉債(CBAS)「成交價格」＝ 券商的「轉債買進均價」（純記錄，不參與損益計算；CB 損益看權利金成本與評估損益）
 function updateCbAvgPrice(id, val) {
   const h = state.holdings.find(h => h.id === id);
   if (!h) return;
   detachFromSync(h);
   const n = parseFloat(val);
   h.cbAvgPrice = isNaN(n) ? null : n;
-  save(); renderPortfolio();
-}
-function updateCbClose(id, val) {
-  const h = state.holdings.find(h => h.id === id);
-  if (!h) return;
-  detachFromSync(h);
-  const n = parseFloat(val);
-  h.cbClose = isNaN(n) ? null : n;
   save(); renderPortfolio();
 }
 function updateManualMarket(id, val) {
