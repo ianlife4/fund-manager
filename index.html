@@ -2541,6 +2541,10 @@ function renderPortfolio() {
 
       const tradeTypeBadge = isCB ? 'badge-gold' : isMargin ? 'badge-red' : h.tradeType === '期貨' ? 'badge-gold' : h.tradeType === '零股' ? 'badge-blue' : 'badge-green';
 
+      // 可轉債防呆：CB 的「成交價格」欄存的是「持有總成本」，沒有現價可對照，
+      // 成本少打幾位數不會被現有的「股價異常」警告抓到（那條跳過 CB）→ 用量級/報酬率把關。
+      const cbCostSuspect = isCB && displayCost > 0 && (Math.abs(prDisplay) > 500 || displayCost < 1000);
+
       // 手續費 & 維持率
       const disc = h.feeDiscount || 6;
       const isEtf = h.tradeType === 'ETF';
@@ -2625,7 +2629,7 @@ function renderPortfolio() {
           ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','可轉債','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
-        <td><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></td>
+        <td><div><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" />${isCB ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">總成本（非單價）</div>` : ''}${cbCostSuspect ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 報酬率 ${prDisplay.toFixed(0)}%，疑成本少位數</div>` : ''}</div></td>
         <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>` : `<div><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />${(h.tradeType!=='期貨' && (h.price>10000 || h.cost>10000)) ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 股價異常,疑少小數點</div>` : ''}</div>`}</td>
         <td>${costCell}</td>
         <td>${incomeCell}</td>
