@@ -2576,9 +2576,11 @@ function renderPortfolio() {
       const inpFull   = inpStyle + `-moz-appearance:textfield;`;
       const onEnter   = `onkeydown="if(event.key==='Enter')this.blur()"`;
 
-      // 付出成本欄：可編輯，無鎖，融資顯示參考提示
+      // 付出成本欄：可編輯，無鎖；融資顯示全額參考，CB 標明是權利金成本（券商：庫存權利金成本）
       const costSubNote = isMargin
         ? `<div style="font-size:10px;color:var(--text-muted)">${h.manualCost!=null?'自動 '+fmtMoney(autoCost):'全額 '+fmtMoney(totalAmt)}</div>`
+        : isCB
+        ? `<div style="font-size:10px;color:var(--text-muted);white-space:nowrap">庫存權利金成本</div>`
         : '';
       const costCell = `<div>
           <input type="number" value="${displayCost}" step="1"
@@ -2586,6 +2588,7 @@ function renderPortfolio() {
             onchange="updateManualCost('${h.id}',this.value)"
             onblur="updateManualCost('${h.id}',this.value)" />
           ${costSubNote}
+          ${cbCostSuspect ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 報酬率 ${prDisplay.toFixed(0)}%，疑少位數</div>` : ''}
         </div>`;
 
       // 預估收入欄：可編輯，無鎖，預設跟市值，手動改後固定
@@ -2629,8 +2632,12 @@ function renderPortfolio() {
           ${['科技','金融','消費','工業','醫療','能源','材料','房地產','ETF','可轉債','其他'].map(s=>`<option value="${s}"${h.sector===s?' selected':''}>${s}</option>`).join('')}
         </select></td>
         <td><input type="number" value="${h.shares}" step="1" style="${inpFull}" ${onEnter} onchange="updateShares('${h.id}',this.value)" onblur="updateShares('${h.id}',this.value)" /></td>
-        <td><div><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" />${isCB ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">總成本（非單價）</div>` : ''}${cbCostSuspect ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 報酬率 ${prDisplay.toFixed(0)}%，疑成本少位數</div>` : ''}</div></td>
-        <td>${isCB ? `<span style="color:var(--text-dim);font-size:11px">—</span>` : `<div><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />${(h.tradeType!=='期貨' && (h.price>10000 || h.cost>10000)) ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 股價異常,疑少小數點</div>` : ''}</div>`}</td>
+        <td>${isCB
+          ? `<div><input type="number" value="${h.cbAvgPrice != null ? h.cbAvgPrice : ''}" step="0.01" placeholder="127" style="${inpFull}" ${onEnter} onchange="updateCbAvgPrice('${h.id}',this.value)" onblur="updateCbAvgPrice('${h.id}',this.value)" /><div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">轉債買進均價</div></div>`
+          : `<div><input type="number" value="${h.cost}" step="0.01" style="${inpFull}" ${onEnter} onchange="updateCost('${h.id}',this.value)" onblur="updateCost('${h.id}',this.value)" /></div>`}</td>
+        <td>${isCB
+          ? `<div><input type="number" value="${h.cbClose != null ? h.cbClose : ''}" step="0.01" placeholder="129" style="${inpFull}" ${onEnter} onchange="updateCbClose('${h.id}',this.value)" onblur="updateCbClose('${h.id}',this.value)" /><div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap">標的債券收盤價</div></div>`
+          : `<div><input type="number" value="${h.price}" step="0.01" style="${inpFull}" ${onEnter} onchange="updatePrice('${h.id}',this.value)" onblur="updatePrice('${h.id}',this.value)" />${(h.tradeType!=='期貨' && (h.price>10000 || h.cost>10000)) ? `<div style="font-size:10px;color:var(--up);white-space:nowrap;margin-top:2px">⚠ 股價異常,疑少小數點</div>` : ''}</div>`}</td>
         <td>${costCell}</td>
         <td>${incomeCell}</td>
         <td>${marketCell}</td>
@@ -3283,7 +3290,27 @@ function updateManualCost(id, val) {
   detachFromSync(h);
   const n = parseFloat(val);
   if (isNaN(n)) return;
-  h.manualCost = n;
+  // 可轉債(CBAS)：totalCost/pieValueOf 等的 CB 分支都直接讀 h.cost、排在 manualCost 之前，
+  // 寫進 manualCost 只會改顯示、不影響現金/淨值 → CB 一律寫回單一真相 h.cost。
+  if (h.tradeType === '可轉債') { h.cost = n; h.manualCost = null; }
+  else h.manualCost = n;
+  save(); renderPortfolio();
+}
+// 可轉債(CBAS)專用欄位：轉債買進均價、標的債券收盤價（純記錄，對照券商畫面用，不參與損益計算）
+function updateCbAvgPrice(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  detachFromSync(h);
+  const n = parseFloat(val);
+  h.cbAvgPrice = isNaN(n) ? null : n;
+  save(); renderPortfolio();
+}
+function updateCbClose(id, val) {
+  const h = state.holdings.find(h => h.id === id);
+  if (!h) return;
+  detachFromSync(h);
+  const n = parseFloat(val);
+  h.cbClose = isNaN(n) ? null : n;
   save(); renderPortfolio();
 }
 function updateManualMarket(id, val) {
