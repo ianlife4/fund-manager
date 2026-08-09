@@ -2798,15 +2798,26 @@ function parseBrokerData() {
   }
   save(); renderPortfolio();
   resultEl.style.color = '#4ecdc4';
-  resultEl.textContent = `✅ 完成！更新 ${result.updated} 筆，新增 ${result.added} 筆` + (result.skipped ? `，跳過 ${result.skipped} 行` : '');
+  resultEl.innerHTML = `✅ 完成！更新 ${result.updated} 筆，新增 ${result.added} 筆` + (result.skipped ? `，跳過 ${result.skipped} 行` : '') + brokerFailedHtml(result.failed);
   document.getElementById('brokerPaste').value = '';
   toast(`券商資料已匯入：更新${result.updated} 新增${result.added}`);
+}
+
+/* 沒解析成功的持股列 → 列出代號，讓使用者知道漏了哪幾檔（OCR 讀壞時寧可跳過也不匯入錯數字） */
+function brokerFailedHtml(failed) {
+  if (!failed || failed.length === 0) return '';
+  return `<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--up);border-radius:8px;background:rgba(242,110,110,0.08);color:var(--up);font-size:12px;line-height:1.6">
+    ⚠ 有 ${failed.length} 檔沒抓進來（截圖數字辨識不完整，為避免匯入錯誤數值已略過）：
+    <b>${failed.map(f => f.ticker).join('、')}</b>
+    <div style="color:var(--text-muted);font-size:11px;margin-top:4px">請改用「貼上文字」，或在上方表單手動新增這幾檔。</div>
+  </div>`;
 }
 
 /* 核心解析：同時支援 tab 與空格格式 */
 function coreBrokerParse(raw) {
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
   let updated = 0, added = 0, skipped = 0;
+  const failed = [];   // 看起來是持股列、但解析不出來的（OCR 讀壞）→ 回報給使用者手動補
 
   for (const line of lines) {
     // 跳過小計、合計、總計、表頭
@@ -2830,9 +2841,12 @@ function coreBrokerParse(raw) {
       applyBrokerRow(parsed) ? updated++ : added++;
     } else {
       skipped++;
+      // 含 4~6 位代號 = 疑似持股列，記下來讓使用者知道漏了哪幾檔
+      const t = line.match(/\((\d{4,6})\)|(?:^|[^\d])(\d{4,6})(?=[^\d,.]|$)/);
+      if (t) failed.push({ ticker: t[1] || t[2], line: line.trim().slice(0, 60) });
     }
   }
-  return { updated, added, skipped };
+  return { updated, added, skipped, failed };
 }
 
 /* Tab 分隔解析（14欄格式） */
@@ -2954,63 +2968,61 @@ function parseSpaceRow(line) {
   let cost = 0, price = 0, totalCost = 0, priceIdx = -1;
   let costIdx = -1;
 
-  // 方法1：均價在「付出成本」之後（國票格式）
-  //   nums[i-1] ≈ nums[i] × 庫存 → 付出成本 = nums[costIdx-1]
+  // ── 列出所有「單價 × 庫存 ≈ 總額」的候選組合（不再第一個就定案）──
+  // 券商列裡同時存在兩組這種關係：成本均價×股數=付出成本、現價×股數=資產市值。
+  // 舊版第一個猜中就用，OCR 只要漏讀成本均價，就會把「現價/資產市值」誤當成本組，整排錯位。
+  const candidates = [];
+  // 型態1：總額在單價「之前」（付出成本 → 成本均價）
   for (let i = 1; i < nums.length; i++) {
     if (nums[i] <= 0 || nums[i-1] <= 0) continue;
     if (nums[i-1] >= nums[i] * shares * 0.9 && nums[i-1] <= nums[i] * shares * 1.1
         && Math.abs(nums[i] - nums[i-1] / shares) < Math.max(1, nums[i] * 0.01)) {
-      costIdx = i;
-      totalCost = nums[i-1];
-      break;
+      candidates.push({ costIdx: i, totalCost: nums[i-1] });
     }
   }
-
-  // 方法2：均價在「總成本」之前（名稱(代號)格式）
-  //   nums[i] × 庫存 ≈ 後面某個 nums[j] → 付出成本 = nums[j]
-  if (costIdx === -1) {
-    for (let i = 1; i < nums.length - 1; i++) {
-      if (nums[i] <= 0) continue;
-      const product = nums[i] * shares;
-      if (product <= 0) continue;
-      for (let j = i + 1; j < Math.min(i + 5, nums.length); j++) {
-        if (nums[j] <= 0) continue;
-        if (Math.abs(nums[j] - product) / product < 0.01) {
-          costIdx = i;
-          totalCost = nums[j];
-          break;
-        }
+  // 型態2：總額在單價「之後」（成本均價 → 付出成本）
+  for (let i = 1; i < nums.length - 1; i++) {
+    if (nums[i] <= 0) continue;
+    const product = nums[i] * shares;
+    if (product <= 0) continue;
+    for (let j = i + 1; j < Math.min(i + 5, nums.length); j++) {
+      if (nums[j] <= 0) continue;
+      if (Math.abs(nums[j] - product) / product < 0.01) {
+        candidates.push({ costIdx: i, totalCost: nums[j] });
+        break;
       }
-      if (costIdx > 0) break;
     }
   }
+  candidates.sort((a, b) => a.costIdx - b.costIdx);
+  if (candidates.length === 0) return null;
 
-  if (costIdx === -1) return null;
-  cost = nums[costIdx];
-
-  // 找現價：costIdx 之後，第一個與 cost 同數量級的正數
-  for (let i = costIdx + 1; i < nums.length; i++) {
-    if (nums[i] <= 0) continue;
-    if (nums[i] >= cost * 0.1 && nums[i] <= cost * 10) {
-      price = nums[i];
-      priceIdx = i;
-      break;
+  // 逐一驗證候選：取其後的現價，且「現價 × 庫存」必須真的能在該列找到（＝資產市值）。
+  // 驗不過就換下一個候選；全部驗不過寧可回傳 null（該列標成「跳過」），也不要匯入錯的數字。
+  let estIncome = 0, mvIdx = -1, expectedMV = 0;
+  let ok = false;
+  for (const cand of candidates) {
+    const cCost = nums[cand.costIdx];
+    if (cCost <= 0) continue;
+    let cPrice = 0, cPriceIdx = -1;
+    for (let i = cand.costIdx + 1; i < nums.length; i++) {
+      if (nums[i] <= 0) continue;
+      if (nums[i] >= cCost * 0.1 && nums[i] <= cCost * 10) { cPrice = nums[i]; cPriceIdx = i; break; }
     }
-  }
-
-  if (cost <= 0 || price <= 0) return null;
-
-  // 找預估收入（含手續費扣減）：priceIdx 之後，≈ price × shares 的大數
-  // 國票格式中預估收入通常在現價之後且略小於市值（扣手續費）
-  let estIncome = 0, mvIdx = -1;
-  const expectedMV = price * shares;
-  for (let i = priceIdx + 1; i < nums.length; i++) {
-    if (nums[i] <= 0) continue;
-    // 資產市值通常是 現價×股數 的 97%~101%
-    if (nums[i] >= expectedMV * 0.97 && nums[i] <= expectedMV * 1.01) {
-      mvIdx = i; estIncome = nums[i]; break;
+    if (cPrice <= 0) continue;
+    const mv = cPrice * shares;
+    let cMvIdx = -1;
+    for (let i = cPriceIdx + 1; i < nums.length; i++) {
+      if (nums[i] <= 0) continue;
+      if (nums[i] >= mv * 0.97 && nums[i] <= mv * 1.01) { cMvIdx = i; break; }
     }
+    if (cMvIdx === -1) continue;               // 找不到資產市值 → 這組不可信
+    costIdx = cand.costIdx; totalCost = cand.totalCost;
+    cost = cCost; price = cPrice; priceIdx = cPriceIdx;
+    mvIdx = cMvIdx; estIncome = nums[cMvIdx]; expectedMV = mv;
+    ok = true;
+    break;
   }
+  if (!ok) return null;
   // 損益試算（券商淨損益）：資產市值後第一個「小值」(可負) → 讓現股也對齊券商，而非毛額。
   // estIncome 改設為 付出成本 + 損益試算，使 損益 = estIncome − 付出成本 = 券商損益試算(= 淨值 − 付出成本)。
   if (mvIdx >= 0 && totalCost > 0) {
@@ -3200,7 +3212,7 @@ async function ocrAndParse() {
     } else {
       save(); renderPortfolio();
       resultEl.style.color = '#4ecdc4';
-      resultEl.textContent = `✅ 完成！更新 ${parseResult.updated} 筆，新增 ${parseResult.added} 筆` + (parseResult.skipped ? `，跳過 ${parseResult.skipped} 行` : '');
+      resultEl.innerHTML = `✅ 完成！更新 ${parseResult.updated} 筆，新增 ${parseResult.added} 筆` + (parseResult.skipped ? `，跳過 ${parseResult.skipped} 行` : '') + brokerFailedHtml(parseResult.failed);
       statusEl.textContent = '辨識並更新成功';
       statusEl.style.color = '#4ecdc4';
       toast(`截圖辨識匯入：更新${parseResult.updated} 新增${parseResult.added}`);
