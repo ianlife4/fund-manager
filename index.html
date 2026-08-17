@@ -887,7 +887,13 @@ document.addEventListener('DOMContentLoaded', () => {
       <button class="btn btn-gold" onclick="addCashflow()">確認新增</button>
     </div>
 
-    <div class="cards-grid" style="grid-template-columns:repeat(5,1fr)">
+    <div class="cards-grid" style="grid-template-columns:repeat(6,1fr)">
+      <div class="card" style="position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--gold)"></div>
+        <div class="card-label">可出金餘額</div>
+        <div class="card-value" id="cf_available" style="color:var(--gold)">$0</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="cf_availableNote">淨投入 − 持倉付出成本</div>
+      </div>
       <div class="card">
         <div class="card-label">累計入金</div>
         <div class="card-value" id="cf_totalIn" style="color:var(--blue)">$0</div>
@@ -3498,6 +3504,20 @@ function renderCashflow() {
   document.getElementById('cf_netIn').textContent = fmtMoney(netIn);
   document.getElementById('cf_fundNav').textContent = fmtMoney(fundTotalNav());
 
+  // 可出金餘額 = 現金餘額（淨投入 − 持倉付出成本）：錢還沒被買進部位卡住的部分
+  const avail = cashBalance();
+  const availEl = document.getElementById('cf_available');
+  const availNoteEl = document.getElementById('cf_availableNote');
+  if (availEl) {
+    availEl.textContent = fmtMoney(avail);
+    availEl.style.color = avail > 0 ? 'var(--gold)' : 'var(--up)';
+  }
+  if (availNoteEl) {
+    availNoteEl.textContent = avail > 0
+      ? '可領走的現金'
+      : avail === 0 ? '滿倉，無現金可領' : '⚠ 已超額投入（融資/借款）';
+  }
+
   const tbody = document.getElementById('cashflowTbody');
   if (cfs.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">💸</div>尚無紀錄</div></td></tr>`;
@@ -3557,6 +3577,16 @@ function addCashflow() {
   const amount = parseFloat(document.getElementById('cf_amount').value);
   const person = document.getElementById('cf_person').value;
   if (!date || isNaN(amount) || amount <= 0) { toast('請填寫日期與金額'); return; }
+  // 出金超過現金餘額 → 先提醒（不硬擋，融資/借款帳戶可能本來就是負的）
+  if (type === '出金') {
+    const avail = cashBalance();
+    if (amount > avail) {
+      const msg = avail > 0
+        ? `目前可出金餘額只有 ${fmtMoney(avail)}，這筆要出 ${fmtMoney(amount)}。\n\n超出的部分等於動用融資／借款，現金會變負數。確定要新增嗎？`
+        : `目前現金餘額為 ${fmtMoney(avail)}（已無可動用現金），這筆出金會讓現金更負。\n\n確定要新增嗎？`;
+      if (!confirm(msg)) return;
+    }
+  }
   state.cashflows.push({ id: Date.now().toString(), date, type, note, amount, person });
   save(); renderCashflow();
   document.getElementById('cf_note').value = '';
