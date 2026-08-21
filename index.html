@@ -35,8 +35,8 @@
 // FIREBASE INIT
 // ════════════════════════════════════════════
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA9fZfRwFQjSN1CHc_PKyg6Hhvh1NT1Bk8",
@@ -61,8 +61,15 @@ window._onSnapshot = onSnapshot;
 window._getDoc = getDoc;
 window._auth = auth;
 window._signIn = signInWithEmailAndPassword;
+window._signUp = createUserWithEmailAndPassword;
 window._signOut = signOut;
 window._onAuthStateChanged = onAuthStateChanged;
+// 訪客申請／核准名單用
+window._doc = doc;
+window._collection = collection;
+window._getDocs = getDocs;
+window._deleteDoc = deleteDoc;
+window._serverTimestamp = serverTimestamp;
 window._firebaseReady = true;
 
 // 初始化 Firebase 連線後觸發 app init
@@ -519,12 +526,23 @@ document.addEventListener('DOMContentLoaded', () => {
   input[type=number] { -moz-appearance:textfield; }
 
   /* ── READONLY MODE ── */
+  /* ⚠ .readonly-hide 之前只掛在 HTML、CSS 沒有對應規則 → 密碼管理/複製帳戶/匯入等區塊
+     在唯讀模式其實照常顯示（明碼密碼可被抄走）。這條是主要修補。 */
+  body.readonly .readonly-hide { display: none !important; }
   body.readonly .add-panel { display: none !important; }
   body.readonly .btn-danger { display: none !important; }
   body.readonly .btn-gold { display: none !important; }
+  /* btn-outline/一般 btn 之前不在名單內 → 備份/匯入/比對等按鈕仍可點 */
+  body.readonly .btn-outline { pointer-events: none !important; opacity: 0.4; }
   body.readonly input[type=number],
   body.readonly input[type=text],
-  body.readonly input[type=date] {
+  body.readonly input[type=password],
+  body.readonly input[type=date],
+  body.readonly input[type=email],
+  body.readonly input[type=checkbox],
+  body.readonly input[type=file],
+  body.readonly input[type=color],
+  body.readonly textarea {
     pointer-events: none;
     border-color: transparent !important;
     background: transparent !important;
@@ -621,8 +639,8 @@ document.addEventListener('DOMContentLoaded', () => {
     </button>
     <div id="loginError" style="margin-top:14px;font-size:13px;color:var(--red);min-height:18px;"></div>
     <div style="margin-top:6px;">
-      <a id="visitorToggle" href="javascript:void(0)" onclick="setVisitorLogin(true)"
-        style="font-size:12px;color:var(--text-muted);text-decoration:none;border-bottom:1px dashed var(--border);">我是訪客,只有查看密碼 →</a>
+      <a id="visitorToggle" href="javascript:void(0)" onclick="setLoginMode('register')"
+        style="font-size:12px;color:var(--text-muted);text-decoration:none;border-bottom:1px dashed var(--border);">我要申請檢視權限 →</a>
     </div>
   </div>
 </div>
@@ -637,6 +655,10 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
   <div class="header-date" id="headerDate"></div>
   <div style="display:flex;align-items:center;gap:8px;">
+    <button id="pendingBtn" class="readonly-hide" onclick="showPage('settings')" title="有訪客申請待審核"
+      style="display:none;font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--up);background:rgba(242,110,110,0.15);color:var(--up);cursor:pointer;">
+      🔔 <span id="pendingCount">0</span> 筆待審核
+    </button>
     <button id="shareBtn" class="readonly-hide" onclick="enterShareMode()" title="交出裝置前，用查看密碼把畫面限制成訪客／單一分頁"
       style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;transition:all 0.2s">
       🔗 分享檢視
@@ -1294,6 +1316,20 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
 
     <div class="section readonly-hide">
+      <div class="section-header">
+        <span class="section-title">訪客檢視權限</span>
+        <button class="btn btn-outline btn-sm" onclick="loadViewerAdmin()">🔄 重新整理</button>
+      </div>
+      <div class="section-body">
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+          訪客在登入頁按「我要申請檢視權限」自行註冊後，會出現在下方待審核清單。
+          <strong style="color:var(--text)">未核准者完全看不到任何資料。</strong>
+        </p>
+        <div id="viewerAdminBox" style="font-size:13px;color:var(--text-muted)">按「重新整理」載入申請與已核准名單…</div>
+      </div>
+    </div>
+
+    <div class="section readonly-hide">
       <div class="section-header"><span class="section-title">複製帳戶</span></div>
       <div class="section-body">
         <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">把「來源帳戶」的全部內容(持倉／出入金／快照／獲利分配…)複製並<strong style="color:var(--red)">覆蓋</strong>到「目標帳戶」。目標帳戶原本的內容會被蓋掉、無法復原(建議先按下方「立即備份全部帳戶」)。</p>
@@ -1321,15 +1357,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="form-grid" style="max-width:600px">
           <div class="form-group">
             <label class="form-label">此頁籤的查看密碼（訪客輸入此密碼可進入此頁籤）</label>
-            <input class="form-input" id="s_viewPassword" type="text" placeholder="留空 = 不設密碼" />
+            <input class="form-input" id="s_viewPassword" type="password" placeholder="留空 = 不設密碼" />
           </div>
           <div class="form-group">
             <label class="form-label">萬用密碼（輸入此密碼可查看全部頁籤）</label>
-            <input class="form-input" id="s_masterPassword" type="text" placeholder="留空 = 不設萬用密碼" />
+            <input class="form-input" id="s_masterPassword" type="password" placeholder="留空 = 不設萬用密碼" />
           </div>
           <div class="form-group">
             <label class="form-label">訪客密碼（輸入此密碼只能看到績效曲線）</label>
-            <input class="form-input" id="s_visitorPassword" type="text" placeholder="留空 = 不設訪客密碼" />
+            <input class="form-input" id="s_visitorPassword" type="password" placeholder="留空 = 不設訪客密碼" />
           </div>
         </div>
         <div style="margin-top:16px;">
@@ -1397,7 +1433,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // accounts = [ { id, name, ...stateFields }, ... ]
 let accounts = [];
 let currentAccountId = null;
-let globalSettings = { masterPassword: '0820', visitorPassword: '888', visitorAccountId: '' };
+let globalSettings = { masterPassword: '', visitorPassword: '', visitorAccountId: '' };  // 預設空 = 未啟用（舊版寫死 '0820'/'888' 等同後門）
 let loginState = null; // null=未登入 | { type:'owner'|'master'|'tab', accountId }
 
 function emptyAccount(name = '帳戶') {
@@ -1442,6 +1478,7 @@ function switchAccount(id) {
 }
 
 function addAccount() {
+  if (!ownerOnly()) return;
   const defaultName = `帳戶 ${String.fromCharCode(65 + accounts.length)}`;
   const name = prompt('新帳戶名稱：', defaultName);
   if (name === null) return;
@@ -1459,6 +1496,7 @@ function addAccount() {
 }
 
 function renameAccount(id, newName) {
+  if (!ownerOnly(true)) return;
   const acct = accounts.find(a => a.id === id);
   if (acct) { acct.name = newName; acct.settings.fundName = newName; }
   saveAllAccounts();
@@ -1467,6 +1505,7 @@ function renameAccount(id, newName) {
 }
 
 function closeAccount(id) {
+  if (!ownerOnly()) return;
   if (accounts.length <= 1) { toast('至少保留一個帳戶'); return; }
   if (!confirm('確定刪除此帳戶？所有資料將消失。')) return;
   accounts = accounts.filter(a => a.id !== id);
@@ -1981,8 +2020,20 @@ function getLabelColor(label) {
 // ════════════════════════════════════════════
 // TABS / PAGES
 // ════════════════════════════════════════════
+// 各檢視範圍允許的分頁（設定頁含密碼與匯出功能，只有擁有者能進）
+const PAGE_ALLOW = {
+  visitor: ['performance'],
+  tab:     ['overview','portfolio','cashflow','performance','allocation','profit'],
+  master:  ['overview','portfolio','cashflow','performance','allocation','profit','compare'],
+};
+function canViewPage(name) {
+  const t = loginState?.type;
+  if (!t) return false;
+  if (t === 'owner') return true;
+  return (PAGE_ALLOW[t] || []).includes(name);
+}
 function showPage(name) {
-  if (loginState?.type === 'visitor' && name !== 'performance') return;
+  if (!canViewPage(name)) return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
@@ -1990,6 +2041,7 @@ function showPage(name) {
   renderPage(name);
 }
 function renderPage(name) {
+  if (!canViewPage(name)) return;
   if (name === 'overview') renderOverview();
   if (name === 'portfolio') renderPortfolio();
   if (name === 'cashflow') renderCashflow();
@@ -2219,6 +2271,7 @@ function autoSnapshotAllAccounts() {
 
 /* 一鍵為所有帳戶記錄今日快照 */
 function saveAllAccountsSnapshot() {
+  if (!ownerOnly()) return;
   if (!confirm(`將為所有 ${accounts.length} 個帳戶建立今日快照，確定？`)) return;
   const today = new Date().toISOString().slice(0,10);
   const originalId = currentAccountId;
@@ -3695,18 +3748,18 @@ function accountNavSeries(acct) {
 }
 
 function toggleCompareAccount(id) {
-  if (!compareSelected) compareSelected = new Set(accounts.map(a => a.id));
+  if (!compareSelected) compareSelected = new Set(getVisibleAccounts().map(a => a.id));
   if (compareSelected.has(id)) compareSelected.delete(id); else compareSelected.add(id);
   renderCompare();
 }
 
 function renderCompare() {
-  if (!compareSelected) compareSelected = new Set(accounts.map(a => a.id));
+  if (!compareSelected) compareSelected = new Set(getVisibleAccounts().map(a => a.id));
 
   // 帳戶選擇 chips
   const chipsEl = document.getElementById('compareChips');
   if (chipsEl) {
-    chipsEl.innerHTML = accounts.map((a, idx) => {
+    chipsEl.innerHTML = getVisibleAccounts().map((a, idx) => {
       const on = compareSelected.has(a.id);
       const col = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
       return `<button onclick="toggleCompareAccount('${a.id}')" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid ${on ? col : 'var(--border)'};background:${on ? col + '22' : 'transparent'};color:${on ? 'var(--text)' : 'var(--text-dim)'};cursor:pointer;font-size:13px;font-family:var(--sans);transition:all .15s;">
@@ -3732,7 +3785,8 @@ function renderCompare() {
 
   const grid = document.getElementById('compareGrid');
   if (!grid) return;
-  const selAccts = accounts.filter(a => compareSelected.has(a.id));
+  const _visible = getVisibleAccounts();
+  const selAccts = _visible.filter(a => compareSelected.has(a.id));
   if (selAccts.length === 0) {
     grid.style.display = 'block';
     grid.innerHTML = `<div class="empty"><div class="empty-icon">📊</div>請在上方點選要比較的帳戶</div>`;
@@ -4614,9 +4668,11 @@ function renderSettings() {
   document.getElementById('s_currency').value = s.currency || 'TWD';
   document.getElementById('s_initNav').value = s.initNav || '';
   document.getElementById('s_startDate').value = s.startDate || '';
-  document.getElementById('s_viewPassword').value = state.viewPassword || '';
-  document.getElementById('s_masterPassword').value = globalSettings.masterPassword || '';
-  document.getElementById('s_visitorPassword').value = globalSettings.visitorPassword || '';
+  // ⚠ 非擁有者不得看到任何密碼明碼（舊版靠已失效的 .readonly-hide 隱藏，等於全公開）
+  const _pwOK = ownerOnly(true);
+  document.getElementById('s_viewPassword').value = _pwOK ? (state.viewPassword || '') : '';
+  document.getElementById('s_masterPassword').value = _pwOK ? (globalSettings.masterPassword || '') : '';
+  document.getElementById('s_visitorPassword').value = _pwOK ? (globalSettings.visitorPassword || '') : '';
   // 複製帳戶下拉：列出所有帳戶（來源預設當前、目標預設另一個）
   const _srcSel = document.getElementById('s_copySrc');
   const _dstSel = document.getElementById('s_copyDst');
@@ -4631,6 +4687,7 @@ function renderSettings() {
 }
 // 複製帳戶：把來源帳戶全部內容深拷貝、覆蓋目標帳戶（保留目標的 id/名稱/密碼；清掉同步旗標）
 function copyAccountData() {
+  if (!ownerOnly()) return;
   const src = accounts.find(a => a.id === document.getElementById('s_copySrc').value);
   const dst = accounts.find(a => a.id === document.getElementById('s_copyDst').value);
   if (!src || !dst) { toast('請選擇帳戶'); return; }
@@ -4652,6 +4709,7 @@ function copyAccountData() {
 }
 // 🔍 比對兩帳戶出入金差異（純唯讀，不改任何資料）
 function diffAccountCashflows() {
+  if (!ownerOnly()) return;
   const panel = document.getElementById('cashflowDiffPanel');
   if (!panel) return;
   const a = accounts.find(x => x.id === document.getElementById('s_copySrc').value);
@@ -4737,6 +4795,7 @@ function diffAccountCashflows() {
 }
 
 function saveSettings() {
+  if (!ownerOnly()) return;
   state.settings.fundName = document.getElementById('s_fundName').value || '我的基金';
   state.settings.currency = document.getElementById('s_currency').value;
   state.settings.initNav = parseFloat(document.getElementById('s_initNav').value) || 0;
@@ -4749,6 +4808,7 @@ function saveSettings() {
   save(); toast('設定已儲存 ✓');
 }
 function savePasswords() {
+  if (!ownerOnly()) return;
   const vp = document.getElementById('s_viewPassword').value.trim();
   const mp = document.getElementById('s_masterPassword').value.trim();
   state.viewPassword = vp;
@@ -4761,6 +4821,7 @@ function savePasswords() {
 }
 
 function exportData() {
+  if (!ownerOnly()) return;
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -4768,8 +4829,10 @@ function exportData() {
   a.click();
   toast('資料已匯出 ✓');
 }
-function importData() { document.getElementById('importFile').click(); }
+function importData() {
+  if (!ownerOnly()) return; document.getElementById('importFile').click(); }
 function handleImport(e) {
+  if (!ownerOnly()) return;
   const f = e.target.files[0];
   if (!f) return;
   const r = new FileReader();
@@ -4911,6 +4974,7 @@ function parseFlexDate(str, defaultYear) {
 }
 
 function clearAllData() {
+  if (!ownerOnly()) return;
   if (!confirm('確定要清除所有資料？此操作無法復原。')) return;
   const fresh = emptyAccount('帳戶 A');
   accounts = [fresh];
@@ -5419,10 +5483,11 @@ const SHARE_KEY = 'fundMgr_shareMode';
 function resolveSharePassword(pwd) {
   const p = (pwd || '').trim();
   if (!p) return null;
+  // 由窄到寬比對：密碼撞號時落在「權限較小」的一邊，避免意外升權
   if (globalSettings.visitorPassword && p === globalSettings.visitorPassword) return { type: 'visitor' };
-  if (globalSettings.masterPassword && p === globalSettings.masterPassword) return { type: 'master' };
   const acct = accounts.find(a => a.viewPassword && p === a.viewPassword);
   if (acct) return { type: 'tab', accountId: acct.id };
+  if (globalSettings.masterPassword && p === globalSettings.masterPassword) return { type: 'master' };
   return null;
 }
 
@@ -5439,6 +5504,7 @@ function applyShareMode(mode) {
 
 // 進入分享檢視（擁有者按，交出裝置前用）
 function enterShareMode() {
+  if (!ownerOnly()) return;
   const pwd = prompt('輸入要交給對方的查看密碼：\n（訪客密碼＝只看績效曲線／分頁密碼＝只看該分頁／萬用密碼＝全部唯讀）');
   if (pwd === null) return;
   const mode = resolveSharePassword(pwd);
@@ -5470,7 +5536,9 @@ function restoreShareMode() {
     const raw = sessionStorage.getItem(SHARE_KEY);
     if (!raw) return false;
     const mode = JSON.parse(raw);
-    if (!mode || !mode.type) return false;
+    // ⚠ sessionStorage 可被竄改 → 白名單驗證，tab 還要確認帳戶真的存在，否則清掉不還原
+    if (!mode || !['visitor', 'tab', 'master'].includes(mode.type)) { sessionStorage.removeItem(SHARE_KEY); return false; }
+    if (mode.type === 'tab' && !accounts.find(a => a.id === mode.accountId)) { sessionStorage.removeItem(SHARE_KEY); return false; }
     applyShareMode(mode);
     return true;
   } catch (e) { return false; }
@@ -5493,35 +5561,72 @@ function showPageByName(name) {
 const OWNER_UNLOCK_PWD = 'nini7520';
 // 擁有者帳號；其他 Firebase 帳號一律視為「唯讀分享帳號」（配合 Firestore 規則：該 UID 只能讀）
 const OWNER_EMAIL = 'nini77520@gmail.com';
-// 訪客只輸入查看密碼時，背景用這組唯讀帳號登入 Firebase。
-// ⚠ 這組帳密會出現在網頁原始碼中（無法避免）：Firestore 規則務必只給它「讀」的權限，
-//   且要知道任何看得懂原始碼的人都能繞過查看密碼直接讀資料。
-const VIEWER_EMAIL = 'viewer@ianker.app';
-const VIEWER_PWD   = 'IankerViewer2026';
-let _pendingViewPwd = null;   // 訪客在登入畫面輸入的查看密碼，等資料載入後才比對
-let visitorLoginMode = false; // 明確切換的訪客登入模式（避免擁有者忘了填 Email 就被當訪客）
+// 登入畫面模式：'login'(登入) | 'register'(訪客申請)
+let loginFormMode = 'login';
+let _justRequested = false;   // 本次 session 剛送出過申請 → 未核准畫面顯示不同訊息
 
-// 切換登入畫面：擁有者(Email+密碼) ↔ 訪客(只要查看密碼)
-function setVisitorLogin(on) {
-  visitorLoginMode = !!on;
-  const emailEl = document.getElementById('loginEmail');
+function setLoginMode(mode) {
+  loginFormMode = mode;
   const badge = document.getElementById('visitorBadge');
-  const link = document.getElementById('visitorToggle');
-  const btn = document.getElementById('loginBtn');
-  const err = document.getElementById('loginError');
-  if (emailEl) emailEl.style.display = on ? 'none' : '';
-  if (badge) badge.style.display = on ? 'block' : 'none';
-  if (btn) btn.textContent = on ? '訪客進入' : '進入';
-  if (link) {
-    link.textContent = on ? '← 我是擁有者,用 Email 登入' : '我是訪客,只有查看密碼 →';
-    link.setAttribute('onclick', `setVisitorLogin(${on ? 'false' : 'true'})`);
+  const link  = document.getElementById('visitorToggle');
+  const btn   = document.getElementById('loginBtn');
+  const err   = document.getElementById('loginError');
+  const isReg = mode === 'register';
+  if (badge) {
+    badge.style.display = isReg ? 'block' : 'none';
+    badge.textContent = '👁 申請檢視權限 · 送出後需經管理者核准';
   }
+  if (btn) btn.textContent = isReg ? '送出申請' : '進入';
+  if (link) {
+    link.textContent = isReg ? '← 已有帳號,直接登入' : '我要申請檢視權限 →';
+    link.setAttribute('onclick', `setLoginMode('${isReg ? 'login' : 'register'}')`);
+  }
+  const emailEl = document.getElementById('loginEmail');
+  if (emailEl) emailEl.placeholder = isReg ? '你的 Email（當作帳號）' : 'Email';
+  const pwdEl = document.getElementById('loginPwd');
+  if (pwdEl) pwdEl.placeholder = isReg ? '設定一組密碼（至少 6 碼）' : '密碼';
   if (err) err.textContent = '';
-  document.getElementById('loginPwd')?.focus();
+  emailEl?.focus();
+}
+
+// 訪客申請：建立自己的 Firebase 帳號 → 寫一筆申請到 requests/{uid} → 等擁有者核准
+async function submitAccessRequest(email, pwd, errEl) {
+  try {
+    let uid;
+    try {
+      const cred = await window._signUp(window._auth, email, pwd);
+      uid = cred.user.uid;
+    } catch (e) {
+      // 已有帳號 → 直接登入後補送申請
+      if ((e?.code || '') === 'auth/email-already-in-use') {
+        const cred = await window._signIn(window._auth, email, pwd);
+        uid = cred.user.uid;
+      } else { throw e; }
+    }
+    await window._setDoc(window._doc(window._db, 'requests', uid), {
+      email, requestedAt: Date.now(), ua: navigator.userAgent.slice(0, 120),
+    });
+    _justRequested = true;
+  } catch (e) {
+    const code = e?.code || '';
+    errEl.style.color = 'var(--red)';
+    errEl.textContent =
+      /weak-password/.test(code) ? '密碼太短，請至少 6 碼' :
+      /invalid-email/.test(code) ? 'Email 格式不正確' :
+      /wrong-password|invalid-credential/.test(code) ? '這個 Email 已被註冊，密碼不正確' :
+      ('申請失敗：' + (code || e));
+  }
 }
 function isOwnerAccount() {
   const e = (window._auth?.currentUser?.email || '').trim().toLowerCase();
   return !e || e === OWNER_EMAIL;   // 無 auth（本機測試）視為擁有者
+}
+// ⚠ 唯一的權限判斷來源。CSS 隱藏不是安全邊界（函式照樣能被呼叫），
+//   所有「會改資料 / 會匯出資料 / 會切換權限」的函式都必須先過這一關。
+function ownerOnly(silent) {
+  const ok = isOwnerAccount() && (!loginState || loginState.type === 'owner');
+  if (!ok && !silent) { try { toast('唯讀檢視中，無法執行此操作'); } catch (e) {} }
+  return ok;
 }
 function toggleReadonly() {
   // 分享檢視中 → 走「需要擁有者密碼」的解除流程
@@ -5565,27 +5670,14 @@ async function attemptLogin() {
   const pwd = document.getElementById('loginPwd').value || '';
   const errEl = document.getElementById('loginError');
   if (!pwd) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入密碼'; return; }
-  // 擁有者模式沒填 Email → 直接提示，不要靜默掉進訪客流程
-  if (!visitorLoginMode && !email) {
-    errEl.style.color = 'var(--red)';
-    errEl.textContent = '請輸入 Email（訪客請按下方「我是訪客」）';
-    return;
-  }
+  if (!email) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入 Email'; return; }
   if (!window._auth || !window._signIn) { errEl.style.color = 'var(--red)'; errEl.textContent = '連線尚未就緒，請稍候再試'; return; }
   errEl.style.color = 'var(--text-dim)';
-  errEl.textContent = '登入中…';
+  errEl.textContent = loginFormMode === 'register' ? '送出申請中…' : '登入中…';
 
-  // 訪客模式：用唯讀帳號登入，載入資料後再比對查看密碼決定範圍
-  if (visitorLoginMode) {
-    _pendingViewPwd = pwd;
-    try {
-      await window._signIn(window._auth, VIEWER_EMAIL, VIEWER_PWD);
-    } catch (e) {
-      _pendingViewPwd = null;
-      errEl.style.color = 'var(--red)';
-      errEl.innerHTML = '訪客檢視尚未啟用<div style="font-size:11px;color:var(--text-muted);margin-top:4px">（管理者尚未在 Firebase 建立唯讀帳號）</div>';
-      document.getElementById('loginPwd').value = '';
-    }
+  // 申請模式：建立自己的帳號 + 送出申請，由擁有者核准
+  if (loginFormMode === 'register') {
+    await submitAccessRequest(email, pwd, errEl);
     return;
   }
 
@@ -5603,6 +5695,10 @@ async function attemptLogin() {
 }
 
 async function doLogout() {
+  // ⚠ 一定要清乾淨：否則下一次登入會經由 restoreShareMode 直接繼承上一輪的權限範圍
+  try { sessionStorage.removeItem(SHARE_KEY); } catch (e) {}
+  _justRequested = false;
+  loginFormMode = 'login';
   try { if (window._signOut && window._auth) await window._signOut(window._auth); } catch(e) {}
   loginState = null;
   location.reload();
@@ -5622,6 +5718,7 @@ function showLoginOverlay() {
 let _loadedOnce = false;
 // 下載完整備份（全部帳戶）+ 本機滾動備份（獨立 key，主資料被蓋也還在）
 function downloadFullBackup(reason) {
+  if (!ownerOnly(true)) return;
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const payload = JSON.stringify({ accounts, currentAccountId, globalSettings, _ts: Date.now(), _backupAt: now.toISOString() });
@@ -5639,6 +5736,7 @@ function downloadFullBackup(reason) {
 
 // 每週自動備份：週日、或距上次 >=7 天就觸發（即使雲端斷線，檔案也保得住）
 function weeklyAutoBackup() {
+  if (!ownerOnly(true)) return;
   try {
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
@@ -5651,50 +5749,193 @@ function weeklyAutoBackup() {
 }
 
 async function onLoggedIn() {
-  // 非擁有者帳號（唯讀分享帳號）→ 只能檢視，且要再輸入查看密碼決定看到哪些內容
+  // ⚠ 先降權、後升權：舊版一進來就 loginState='owner' + 移除 readonly + 關掉登入遮罩，
+  //   再 await 網路，中間有一段「完整編輯權空窗期」，重整時對方看得到也點得到。
   const email = (window._auth?.currentUser?.email || '').trim().toLowerCase();
   const isViewerAccount = !!email && email !== OWNER_EMAIL;
+
+  loginState = null;                              // 範圍未定 → refreshAllViews 會自動不渲染
+  document.body.classList.add('readonly');        // 先鎖住，確認身分後才放行
+
+  if (!_loadedOnce) {
+    _loadedOnce = true;
+    await loadFromFirebase();        // 規則鎖 UID，未登入/未授權會被擋
+  }
+
+  // 分享帳號：範圍由「核准名單」決定；沒被核准就完全不給看
+  if (isViewerAccount) {
+    hideLoginOverlay();
+    const granted = await applyViewerGrant();
+    if (!granted) return;                         // 內部已顯示「等待核准」畫面
+    return;
+  }
+
+  // ── 以下為擁有者 ──
+  // 同一分頁先前切成分享檢視 → 重整後接回限制，不讓對方按 F5 拿到完整權限
+  if (restoreShareMode()) { hideLoginOverlay(); return; }
 
   loginState = { type: 'owner' };
   document.body.classList.remove('readonly');
   const rb = document.getElementById('readonlyBtn'); if (rb) rb.textContent = '✏️ 編輯中';
   hideLoginOverlay();
-  if (!_loadedOnce) {
-    _loadedOnce = true;
-    await loadFromFirebase();        // 規則鎖 UID，未登入會被擋
-    // ⚠ 不再登入時自動建快照：那會讓「每天開一次 App」就多一個日期點，
-    //   把績效曲線的時間軸灌滿（且舊版標成 autoGenerated:false 偽裝成手動，清理機制擋不掉）。
-    //   要記快照請按「記錄本週快照」或「一鍵為所有帳戶記錄今日快照」。
-    weeklyAutoBackup();
-  }
-  // 若這個分頁先前被切成分享檢視 → 重整後接回限制，不讓對方按 F5 就拿到完整權限
-  if (restoreShareMode()) return;
-  // 唯讀分享帳號：必須用查看密碼指定範圍，否則不給看
-  if (isViewerAccount) { requireViewPassword(); return; }
+  // 備份含全部帳戶與密碼，必須在確定是擁有者之後才跑（舊版在驗證前就下載給訪客）
+  weeklyAutoBackup();
   refreshAllViews();
+  refreshPendingBadge();
 }
 
-// 唯讀分享帳號登入後：套用查看密碼決定範圍
-function requireViewPassword() {
-  // 登入畫面已輸入過查看密碼 → 直接套用，不再多問一次
-  if (_pendingViewPwd !== null) {
-    const pwd = _pendingViewPwd;
-    _pendingViewPwd = null;
-    const mode = resolveSharePassword(pwd);
-    if (mode) { applyShareMode(mode); return; }
-    alert('查看密碼不正確');
-    doLogout();
-    return;
+// 分享帳號登入後：去 viewers/{uid} 查自己的核准範圍。沒被核准就完全不給看。
+// （取代舊的「輸入查看密碼決定範圍」——密碼跟資料存在同一份文件，訪客讀得到，等於後門）
+async function applyViewerGrant() {
+  const uid = window._auth?.currentUser?.uid;
+  if (!uid) { showPendingScreen('無法確認身分，請重新登入'); return false; }
+  try {
+    const snap = await window._getDoc(window._doc(window._db, 'viewers', uid));
+    if (!snap.exists()) {
+      showPendingScreen(_justRequested
+        ? '申請已送出，等待管理者核准。核准後重新登入即可查看。'
+        : '你的帳號尚未被核准。請聯絡管理者，或按下方重新送出申請。');
+      return false;
+    }
+    const g = snap.data() || {};
+    const scope = g.scope === 'master' ? { type: 'master' }
+      : g.scope === 'tab' && g.accountId ? { type: 'tab', accountId: g.accountId }
+      : { type: 'visitor' };
+    // tab 範圍指到不存在的帳戶 → 降級成訪客，不要因此看到全部
+    if (scope.type === 'tab' && !accounts.find(a => a.id === scope.accountId)) scope.type = 'visitor';
+    applyShareMode(scope);
+    return true;
+  } catch (e) {
+    showPendingScreen('讀取權限失敗：' + (e?.code || e));
+    return false;
   }
-  for (let tries = 3; tries > 0; tries--) {
-    const pwd = prompt(`請輸入查看密碼（還有 ${tries} 次機會）：`);
-    if (pwd === null) { doLogout(); return; }
-    const mode = resolveSharePassword(pwd);
-    if (mode) { applyShareMode(mode); return; }
-    alert('密碼不正確');
+}
+
+// ════════════════════════════════════════════
+// 訪客檢視權限管理（擁有者用）
+// requests/{uid} = 待審核申請；viewers/{uid} = 已核准（含 scope 範圍）
+// ════════════════════════════════════════════
+async function _fetchCol(name) {
+  const snap = await window._getDocs(window._collection(window._db, name));
+  const out = [];
+  snap.forEach(d => out.push({ uid: d.id, ...(d.data() || {}) }));
+  return out;
+}
+
+async function refreshPendingBadge() {
+  if (!ownerOnly(true)) return;
+  try {
+    const reqs = await _fetchCol('requests');
+    const btn = document.getElementById('pendingBtn');
+    const cnt = document.getElementById('pendingCount');
+    if (btn && cnt) {
+      cnt.textContent = reqs.length;
+      btn.style.display = reqs.length ? '' : 'none';
+    }
+  } catch (e) {}
+}
+
+async function loadViewerAdmin() {
+  const box = document.getElementById('viewerAdminBox');
+  if (!box) return;
+  if (!ownerOnly()) { box.innerHTML = ''; return; }
+  box.innerHTML = '載入中…';
+  try {
+    const [reqs, viewers] = await Promise.all([_fetchCol('requests'), _fetchCol('viewers')]);
+    const approvedUids = new Set(viewers.map(v => v.uid));
+    const pending = reqs.filter(r => !approvedUids.has(r.uid));
+    const esc = t => String(t || '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    const acctOpts = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+
+    const pendingHtml = pending.length === 0
+      ? `<div style="color:var(--text-muted);font-size:12px;padding:6px 0">目前沒有待審核的申請</div>`
+      : pending.map(r => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--surface2)">
+          <div style="flex:1;min-width:180px">
+            <div style="color:var(--text);font-size:13px">${esc(r.email)}</div>
+            <div style="color:var(--text-muted);font-size:10px;font-family:var(--mono)">${esc(r.uid)}</div>
+          </div>
+          <select id="scope_${r.uid}" onchange="_toggleAcctSel('${r.uid}')" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px">
+            <option value="visitor">只看績效曲線</option>
+            <option value="tab">只看單一帳戶</option>
+            <option value="master">全部帳戶（唯讀）</option>
+          </select>
+          <select id="acct_${r.uid}" style="display:none;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px">${acctOpts}</select>
+          <button class="btn btn-gold btn-sm" onclick="approveViewer('${r.uid}','${esc(r.email)}')">核准</button>
+          <button class="btn btn-danger btn-sm" onclick="rejectViewer('${r.uid}')">拒絕</button>
+        </div>`).join('');
+
+    const scopeName = v => v.scope === 'master' ? '全部帳戶（唯讀）'
+      : v.scope === 'tab' ? `只看：${esc((accounts.find(a => a.id === v.accountId) || {}).name || v.accountId)}`
+      : '只看績效曲線';
+    const viewersHtml = viewers.length === 0
+      ? `<div style="color:var(--text-muted);font-size:12px;padding:6px 0">尚無已核准的訪客</div>`
+      : viewers.map(v => `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+          <div style="flex:1;min-width:180px;color:var(--text);font-size:13px">${esc(v.email)}
+            <span style="color:var(--gold);font-size:11px;margin-left:6px">${scopeName(v)}</span></div>
+          <button class="btn btn-danger btn-sm" onclick="revokeViewer('${v.uid}')">撤銷</button>
+        </div>`).join('');
+
+    box.innerHTML = `
+      <div style="font-size:11px;color:var(--up);text-transform:uppercase;letter-spacing:0.08em;margin:4px 0 8px">待審核 ${pending.length}</div>
+      ${pendingHtml}
+      <div style="font-size:11px;color:var(--green);text-transform:uppercase;letter-spacing:0.08em;margin:16px 0 8px">已核准 ${viewers.length}</div>
+      ${viewersHtml}`;
+    refreshPendingBadge();
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--red)">載入失敗：${e?.code || e}（Firestore 規則可能尚未加上 requests/viewers 段）</span>`;
   }
-  alert('密碼錯誤次數過多，已登出。');
-  doLogout();
+}
+
+function _toggleAcctSel(uid) {
+  const sc = document.getElementById('scope_' + uid);
+  const ac = document.getElementById('acct_' + uid);
+  if (sc && ac) ac.style.display = sc.value === 'tab' ? '' : 'none';
+}
+
+async function approveViewer(uid, email) {
+  if (!ownerOnly()) return;
+  const scope = document.getElementById('scope_' + uid)?.value || 'visitor';
+  const accountId = scope === 'tab' ? (document.getElementById('acct_' + uid)?.value || '') : '';
+  if (scope === 'tab' && !accountId) { toast('請選擇要開放的帳戶'); return; }
+  try {
+    await window._setDoc(window._doc(window._db, 'viewers', uid), { email, scope, accountId, approvedAt: Date.now() });
+    await window._deleteDoc(window._doc(window._db, 'requests', uid));
+    toast(`已核准 ${email} ✓`);
+    loadViewerAdmin();
+  } catch (e) { toast('核准失敗：' + (e?.code || e)); }
+}
+
+async function rejectViewer(uid) {
+  if (!ownerOnly()) return;
+  if (!confirm('拒絕這筆申請？對方將無法查看任何資料。')) return;
+  try {
+    await window._deleteDoc(window._doc(window._db, 'requests', uid));
+    toast('已拒絕'); loadViewerAdmin();
+  } catch (e) { toast('操作失敗：' + (e?.code || e)); }
+}
+
+async function revokeViewer(uid) {
+  if (!ownerOnly()) return;
+  if (!confirm('撤銷這位訪客的權限？他下次重新整理就看不到資料了。')) return;
+  try {
+    await window._deleteDoc(window._doc(window._db, 'viewers', uid));
+    toast('已撤銷'); loadViewerAdmin();
+  } catch (e) { toast('操作失敗：' + (e?.code || e)); }
+}
+
+// 未核准 / 出錯時的畫面：只給訊息與登出，不渲染任何資料
+function showPendingScreen(msg) {
+  loginState = null;
+  document.body.classList.add('readonly');
+  const ov = document.getElementById('loginOverlay');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  ov.innerHTML = `<div style="width:380px;padding:44px 36px;background:var(--surface);border:1px solid var(--border);border-radius:20px;text-align:center;">
+      <div style="font-size:38px;margin-bottom:12px">🔒</div>
+      <div style="font-family:var(--serif);font-size:19px;color:var(--gold);margin-bottom:14px;">尚未取得檢視權限</div>
+      <div style="font-size:13px;color:var(--text-dim);line-height:1.7;margin-bottom:22px;">${msg}</div>
+      <button onclick="doLogout()" style="width:100%;padding:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;cursor:pointer;">登出</button>
+    </div>`;
 }
 
 let _appInited = false;
