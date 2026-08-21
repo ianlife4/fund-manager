@@ -608,17 +608,22 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="width:52px;height:52px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:26px;color:#0a0c10;font-weight:700;margin:0 auto 20px;">F</div>
     <div style="font-family:var(--serif);font-size:22px;color:var(--gold);margin-bottom:4px;">Ianker 績效紀錄</div>
     <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:28px;">Portfolio Manager</div>
-    <input id="loginEmail" type="email" placeholder="Email（訪客免填）" autocomplete="username"
+    <div id="visitorBadge" style="display:none;font-size:12px;color:var(--gold);background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.35);border-radius:8px;padding:6px 10px;margin-bottom:14px;">👁 訪客檢視 · 只需輸入查看密碼</div>
+    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username"
       onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()"
       style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.05em;" />
     <input id="loginPwd" type="password" placeholder="密碼" autocomplete="current-password"
       onkeydown="if(event.key==='Enter')attemptLogin()"
       style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.1em;" />
-    <button onclick="attemptLogin()"
+    <button id="loginBtn" onclick="attemptLogin()"
       style="width:100%;padding:13px;background:var(--gold);color:#0a0c10;border:none;border-radius:10px;font-size:15px;font-weight:700;font-family:var(--sans);cursor:pointer;transition:background 0.2s;">
       進入
     </button>
     <div id="loginError" style="margin-top:14px;font-size:13px;color:var(--red);min-height:18px;"></div>
+    <div style="margin-top:6px;">
+      <a id="visitorToggle" href="javascript:void(0)" onclick="setVisitorLogin(true)"
+        style="font-size:12px;color:var(--text-muted);text-decoration:none;border-bottom:1px dashed var(--border);">我是訪客,只有查看密碼 →</a>
+    </div>
   </div>
 </div>
 
@@ -5494,6 +5499,26 @@ const OWNER_EMAIL = 'nini77520@gmail.com';
 const VIEWER_EMAIL = 'viewer@ianker.app';
 const VIEWER_PWD   = 'IankerViewer2026';
 let _pendingViewPwd = null;   // 訪客在登入畫面輸入的查看密碼，等資料載入後才比對
+let visitorLoginMode = false; // 明確切換的訪客登入模式（避免擁有者忘了填 Email 就被當訪客）
+
+// 切換登入畫面：擁有者(Email+密碼) ↔ 訪客(只要查看密碼)
+function setVisitorLogin(on) {
+  visitorLoginMode = !!on;
+  const emailEl = document.getElementById('loginEmail');
+  const badge = document.getElementById('visitorBadge');
+  const link = document.getElementById('visitorToggle');
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginError');
+  if (emailEl) emailEl.style.display = on ? 'none' : '';
+  if (badge) badge.style.display = on ? 'block' : 'none';
+  if (btn) btn.textContent = on ? '訪客進入' : '進入';
+  if (link) {
+    link.textContent = on ? '← 我是擁有者,用 Email 登入' : '我是訪客,只有查看密碼 →';
+    link.setAttribute('onclick', `setVisitorLogin(${on ? 'false' : 'true'})`);
+  }
+  if (err) err.textContent = '';
+  document.getElementById('loginPwd')?.focus();
+}
 function isOwnerAccount() {
   const e = (window._auth?.currentUser?.email || '').trim().toLowerCase();
   return !e || e === OWNER_EMAIL;   // 無 auth（本機測試）視為擁有者
@@ -5540,19 +5565,25 @@ async function attemptLogin() {
   const pwd = document.getElementById('loginPwd').value || '';
   const errEl = document.getElementById('loginError');
   if (!pwd) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入密碼'; return; }
+  // 擁有者模式沒填 Email → 直接提示，不要靜默掉進訪客流程
+  if (!visitorLoginMode && !email) {
+    errEl.style.color = 'var(--red)';
+    errEl.textContent = '請輸入 Email（訪客請按下方「我是訪客」）';
+    return;
+  }
   if (!window._auth || !window._signIn) { errEl.style.color = 'var(--red)'; errEl.textContent = '連線尚未就緒，請稍候再試'; return; }
   errEl.style.color = 'var(--text-dim)';
   errEl.textContent = '登入中…';
 
-  // 沒填 Email → 當成訪客查看密碼：背景用唯讀帳號登入，載入資料後再比對密碼決定範圍
-  if (!email) {
+  // 訪客模式：用唯讀帳號登入，載入資料後再比對查看密碼決定範圍
+  if (visitorLoginMode) {
     _pendingViewPwd = pwd;
     try {
       await window._signIn(window._auth, VIEWER_EMAIL, VIEWER_PWD);
     } catch (e) {
       _pendingViewPwd = null;
       errEl.style.color = 'var(--red)';
-      errEl.textContent = '訪客檢視尚未啟用（唯讀帳號未建立）';
+      errEl.innerHTML = '訪客檢視尚未啟用<div style="font-size:11px;color:var(--text-muted);margin-top:4px">（管理者尚未在 Firebase 建立唯讀帳號）</div>';
       document.getElementById('loginPwd').value = '';
     }
     return;
