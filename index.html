@@ -1658,6 +1658,8 @@ function syncMasterToSlave() {
 }
 
 function saveAllAccounts() {
+  // 唯讀分享帳號 / 分享檢視中：一律不寫入（Firestore 規則本來就會擋，這裡先攔以免跳錯誤、也避免蓋到雲端）
+  if (!isOwnerAccount() || (loginState && loginState.type !== 'owner')) return;
   // 把當前 state 同步回 accounts 陣列
   const idx = accounts.findIndex(a => a.id === currentAccountId);
   if (idx >= 0) accounts[idx] = { ...state, id: currentAccountId, name: accounts[idx].name };
@@ -5442,6 +5444,8 @@ function enterShareMode() {
 
 // 退出分享檢視 → 需要擁有者密碼
 function exitShareMode() {
+  // 唯讀分享帳號不得解除（就算知道擁有者密碼也不行；Firestore 規則本來就不讓它寫）
+  if (!isOwnerAccount()) { toast('此帳號僅供檢視,無法解除限制'); return; }
   const pwd = prompt('請輸入擁有者密碼以解除檢視限制：');
   if (pwd === null) return;
   if (pwd !== OWNER_UNLOCK_PWD) { toast('密碼錯誤 ✗'); return; }
@@ -5482,6 +5486,12 @@ function showPageByName(name) {
 // READONLY MODE
 // ════════════════════════════════════════════
 const OWNER_UNLOCK_PWD = 'nini7520';
+// 擁有者帳號；其他 Firebase 帳號一律視為「唯讀分享帳號」（配合 Firestore 規則：該 UID 只能讀）
+const OWNER_EMAIL = 'nini77520@gmail.com';
+function isOwnerAccount() {
+  const e = (window._auth?.currentUser?.email || '').trim().toLowerCase();
+  return !e || e === OWNER_EMAIL;   // 無 auth（本機測試）視為擁有者
+}
 function toggleReadonly() {
   // 分享檢視中 → 走「需要擁有者密碼」的解除流程
   if (loginState && loginState.type !== 'owner') { exitShareMode(); return; }
@@ -5589,6 +5599,10 @@ function weeklyAutoBackup() {
 }
 
 async function onLoggedIn() {
+  // 非擁有者帳號（唯讀分享帳號）→ 只能檢視，且要再輸入查看密碼決定看到哪些內容
+  const email = (window._auth?.currentUser?.email || '').trim().toLowerCase();
+  const isViewerAccount = !!email && email !== OWNER_EMAIL;
+
   loginState = { type: 'owner' };
   document.body.classList.remove('readonly');
   const rb = document.getElementById('readonlyBtn'); if (rb) rb.textContent = '✏️ 編輯中';
@@ -5603,7 +5617,22 @@ async function onLoggedIn() {
   }
   // 若這個分頁先前被切成分享檢視 → 重整後接回限制，不讓對方按 F5 就拿到完整權限
   if (restoreShareMode()) return;
+  // 唯讀分享帳號：必須用查看密碼指定範圍，否則不給看
+  if (isViewerAccount) { requireViewPassword(); return; }
   refreshAllViews();
+}
+
+// 唯讀分享帳號登入後：要求輸入查看密碼（訪客／分頁／萬用），輸錯就登出
+function requireViewPassword() {
+  for (let tries = 3; tries > 0; tries--) {
+    const pwd = prompt(`請輸入查看密碼（還有 ${tries} 次機會）：`);
+    if (pwd === null) { doLogout(); return; }
+    const mode = resolveSharePassword(pwd);
+    if (mode) { applyShareMode(mode); return; }
+    alert('密碼不正確');
+  }
+  alert('密碼錯誤次數過多，已登出。');
+  doLogout();
 }
 
 let _appInited = false;
