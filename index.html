@@ -632,6 +632,10 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
   <div class="header-date" id="headerDate"></div>
   <div style="display:flex;align-items:center;gap:8px;">
+    <button id="shareBtn" class="readonly-hide" onclick="enterShareMode()" title="交出裝置前，用查看密碼把畫面限制成訪客／單一分頁"
+      style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;transition:all 0.2s">
+      🔗 分享檢視
+    </button>
     <button id="readonlyBtn" onclick="toggleReadonly()"
       style="font-size:11px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;transition:all 0.2s">
       🔒 唯讀
@@ -5399,14 +5403,93 @@ function toast(msg) {
 }
 
 // ════════════════════════════════════════════
+// 分享檢視（訪客 / 單一分頁 / 萬用）
+// 三組密碼在「設定 → 密碼管理」設定；進入後強制唯讀，且要用擁有者密碼才能退出。
+// 模式記在 sessionStorage，重新整理不會偷跑回完整權限（關掉分頁才解除）。
+// ════════════════════════════════════════════
+const SHARE_KEY = 'fundMgr_shareMode';
+
+function resolveSharePassword(pwd) {
+  const p = (pwd || '').trim();
+  if (!p) return null;
+  if (globalSettings.visitorPassword && p === globalSettings.visitorPassword) return { type: 'visitor' };
+  if (globalSettings.masterPassword && p === globalSettings.masterPassword) return { type: 'master' };
+  const acct = accounts.find(a => a.viewPassword && p === a.viewPassword);
+  if (acct) return { type: 'tab', accountId: acct.id };
+  return null;
+}
+
+function applyShareMode(mode) {
+  loginState = mode;
+  document.body.classList.add('readonly');
+  document.body.classList.toggle('visitor-mode', mode.type === 'visitor');
+  sessionStorage.setItem(SHARE_KEY, JSON.stringify(mode));
+  const btn = document.getElementById('readonlyBtn');
+  if (btn) btn.textContent = mode.type === 'visitor' ? '👁 訪客檢視' : mode.type === 'tab' ? '👁 單一分頁' : '👁 唯讀檢視';
+  if (mode.type === 'visitor') showPageByName('performance');
+  refreshAllViews();
+}
+
+// 進入分享檢視（擁有者按，交出裝置前用）
+function enterShareMode() {
+  const pwd = prompt('輸入要交給對方的查看密碼：\n（訪客密碼＝只看績效曲線／分頁密碼＝只看該分頁／萬用密碼＝全部唯讀）');
+  if (pwd === null) return;
+  const mode = resolveSharePassword(pwd);
+  if (!mode) { toast('密碼不正確 ✗'); return; }
+  applyShareMode(mode);
+  toast(mode.type === 'visitor' ? '已進入訪客檢視（只看績效曲線）' : mode.type === 'tab' ? '已鎖定單一分頁檢視' : '已進入全部唯讀檢視');
+}
+
+// 退出分享檢視 → 需要擁有者密碼
+function exitShareMode() {
+  const pwd = prompt('請輸入擁有者密碼以解除檢視限制：');
+  if (pwd === null) return;
+  if (pwd !== OWNER_UNLOCK_PWD) { toast('密碼錯誤 ✗'); return; }
+  sessionStorage.removeItem(SHARE_KEY);
+  loginState = { type: 'owner' };
+  document.body.classList.remove('readonly', 'visitor-mode');
+  const btn = document.getElementById('readonlyBtn');
+  if (btn) btn.textContent = '✏️ 編輯中';
+  localStorage.setItem('fundMgr_readonly', '0');
+  refreshAllViews();
+  toast('已解除檢視限制 ✓');
+}
+
+// 重整後把分享模式接回來（避免對方一按 F5 就變成完整權限）
+function restoreShareMode() {
+  try {
+    const raw = sessionStorage.getItem(SHARE_KEY);
+    if (!raw) return false;
+    const mode = JSON.parse(raw);
+    if (!mode || !mode.type) return false;
+    applyShareMode(mode);
+    return true;
+  } catch (e) { return false; }
+}
+
+// 不透過 showPage(需要 event.currentTarget) 的切頁
+function showPageByName(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const pg = document.getElementById('page-' + name);
+  if (pg) pg.classList.add('active');
+  const tab = [...document.querySelectorAll('.tab')].find(t => (t.getAttribute('onclick') || '').includes(`'${name}'`));
+  if (tab) tab.classList.add('active');
+  renderPage(name);
+}
+
+// ════════════════════════════════════════════
 // READONLY MODE
 // ════════════════════════════════════════════
+const OWNER_UNLOCK_PWD = 'nini7520';
 function toggleReadonly() {
+  // 分享檢視中 → 走「需要擁有者密碼」的解除流程
+  if (loginState && loginState.type !== 'owner') { exitShareMode(); return; }
   const isReadonly = document.body.classList.contains('readonly');
   if (isReadonly) {
     // 目前唯讀 → 要解鎖，需要輸入密碼
     const pwd = prompt('請輸入密碼以進入編輯模式：');
-    if (pwd === 'nini7520') {
+    if (pwd === OWNER_UNLOCK_PWD) {
       document.body.classList.remove('readonly');
       localStorage.setItem('fundMgr_readonly', '0');
       const btn = document.getElementById('readonlyBtn');
@@ -5518,6 +5601,8 @@ async function onLoggedIn() {
     //   要記快照請按「記錄本週快照」或「一鍵為所有帳戶記錄今日快照」。
     weeklyAutoBackup();
   }
+  // 若這個分頁先前被切成分享檢視 → 重整後接回限制，不讓對方按 F5 就拿到完整權限
+  if (restoreShareMode()) return;
   refreshAllViews();
 }
 
