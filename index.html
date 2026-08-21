@@ -608,7 +608,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div style="width:52px;height:52px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:26px;color:#0a0c10;font-weight:700;margin:0 auto 20px;">F</div>
     <div style="font-family:var(--serif);font-size:22px;color:var(--gold);margin-bottom:4px;">Ianker 績效紀錄</div>
     <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:28px;">Portfolio Manager</div>
-    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username"
+    <input id="loginEmail" type="email" placeholder="Email（訪客免填）" autocomplete="username"
       onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()"
       style="width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;font-family:var(--sans);outline:none;margin-bottom:14px;text-align:center;letter-spacing:0.05em;" />
     <input id="loginPwd" type="password" placeholder="密碼" autocomplete="current-password"
@@ -5488,6 +5488,12 @@ function showPageByName(name) {
 const OWNER_UNLOCK_PWD = 'nini7520';
 // 擁有者帳號；其他 Firebase 帳號一律視為「唯讀分享帳號」（配合 Firestore 規則：該 UID 只能讀）
 const OWNER_EMAIL = 'nini77520@gmail.com';
+// 訪客只輸入查看密碼時，背景用這組唯讀帳號登入 Firebase。
+// ⚠ 這組帳密會出現在網頁原始碼中（無法避免）：Firestore 規則務必只給它「讀」的權限，
+//   且要知道任何看得懂原始碼的人都能繞過查看密碼直接讀資料。
+const VIEWER_EMAIL = 'viewer@ianker.app';
+const VIEWER_PWD   = 'IankerViewer2026';
+let _pendingViewPwd = null;   // 訪客在登入畫面輸入的查看密碼，等資料載入後才比對
 function isOwnerAccount() {
   const e = (window._auth?.currentUser?.email || '').trim().toLowerCase();
   return !e || e === OWNER_EMAIL;   // 無 auth（本機測試）視為擁有者
@@ -5533,10 +5539,25 @@ async function attemptLogin() {
   const email = (document.getElementById('loginEmail').value || '').trim();
   const pwd = document.getElementById('loginPwd').value || '';
   const errEl = document.getElementById('loginError');
-  if (!email || !pwd) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入 Email 和密碼'; return; }
+  if (!pwd) { errEl.style.color = 'var(--red)'; errEl.textContent = '請輸入密碼'; return; }
   if (!window._auth || !window._signIn) { errEl.style.color = 'var(--red)'; errEl.textContent = '連線尚未就緒，請稍候再試'; return; }
   errEl.style.color = 'var(--text-dim)';
   errEl.textContent = '登入中…';
+
+  // 沒填 Email → 當成訪客查看密碼：背景用唯讀帳號登入，載入資料後再比對密碼決定範圍
+  if (!email) {
+    _pendingViewPwd = pwd;
+    try {
+      await window._signIn(window._auth, VIEWER_EMAIL, VIEWER_PWD);
+    } catch (e) {
+      _pendingViewPwd = null;
+      errEl.style.color = 'var(--red)';
+      errEl.textContent = '訪客檢視尚未啟用（唯讀帳號未建立）';
+      document.getElementById('loginPwd').value = '';
+    }
+    return;
+  }
+
   try {
     await window._signIn(window._auth, email, pwd);
     // 成功 → onAuthStateChanged 會接手載入資料
@@ -5622,8 +5643,18 @@ async function onLoggedIn() {
   refreshAllViews();
 }
 
-// 唯讀分享帳號登入後：要求輸入查看密碼（訪客／分頁／萬用），輸錯就登出
+// 唯讀分享帳號登入後：套用查看密碼決定範圍
 function requireViewPassword() {
+  // 登入畫面已輸入過查看密碼 → 直接套用，不再多問一次
+  if (_pendingViewPwd !== null) {
+    const pwd = _pendingViewPwd;
+    _pendingViewPwd = null;
+    const mode = resolveSharePassword(pwd);
+    if (mode) { applyShareMode(mode); return; }
+    alert('查看密碼不正確');
+    doLogout();
+    return;
+  }
   for (let tries = 3; tries > 0; tries--) {
     const pwd = prompt(`請輸入查看密碼（還有 ${tries} 次機會）：`);
     if (pwd === null) { doLogout(); return; }
