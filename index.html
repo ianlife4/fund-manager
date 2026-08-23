@@ -1462,6 +1462,7 @@ function emptyAccount(name = '帳戶') {
     profitDists: [],
     customColors: {},
     viewPassword: '',
+    pledgeLoan: 0,        // 股票借款（質押）：抵押持股借出的現金，帳戶層級
   };
 }
 
@@ -4805,7 +4806,9 @@ function diffAccountCashflows() {
     TYPES.forEach(t => o[t] = sumBy(acct, t));
     o.netDep = withState(acct, () => netDeposited());
     o.cost   = withState(acct, () => totalCost());
-    o.cash   = o.netDep - o.cost;
+    o.pledge = withState(acct, () => pledgeLoanTotal());
+    // 用 cashBalance() 而不是自己重算，否則公式一改（例如加入質押借款）這裡就會悄悄失準
+    o.cash   = withState(acct, () => cashBalance());
     o.n      = (acct.cashflows || []).length;
     return o;
   };
@@ -4864,6 +4867,7 @@ function diffAccountCashflows() {
           ${TYPES.map(t => row(t, sa[t], sb[t])).join('')}
           ${row('淨投入資金', sa.netDep, sb.netDep, true)}
           ${row('持倉付出成本', sa.cost, sb.cost, true)}
+          ${row('股票借款（質押）', sa.pledge, sb.pledge)}
           ${row('現金餘額（淨投入−成本）', sa.cash, sb.cash, true)}
         </tbody>
       </table>
