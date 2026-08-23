@@ -1041,6 +1041,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <input type="checkbox" id="restoreOutflowChk" onchange="toggleRestoreOutflow(this.checked)" style="cursor:pointer;" />
             <span style="color:var(--gold)">還原出金</span>
           </label>
+          <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;" title="把「未實現損益延伸」那條藍色虛線直接接到黃線末端，變成一條連續的線；終點＝基金總淨值">
+            <input type="checkbox" id="mergeUnrealChk" onchange="toggleMergeUnrealized(this.checked)" style="cursor:pointer;" />
+            <span style="color:var(--gold)">合併未實現</span>
+          </label>
           <label style="font-size:11px;color:var(--text-dim)">線條顏色</label>
           <input type="color" id="navChartColor" value="#c9a84c"
             style="width:28px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;"
@@ -3913,6 +3917,14 @@ function toggleRealNavLine(on) {
   save(); renderPerformance();
 }
 
+// 合併未實現：把藍色虛線接進黃線，讓看圖的人不用自己加總（記在該帳戶設定，各帳戶獨立）
+function toggleMergeUnrealized(on) {
+  if (!ownerOnly()) return;
+  state.settings = state.settings || {};
+  state.settings.mergeUnrealized = !!on;
+  save(); renderPerformance();
+}
+
 // 還原出金：把已領走的錢加回曲線，看「沒出金的話淨值會長怎樣」（記在該帳戶設定）
 function toggleRestoreOutflow(on) {
   state.settings = state.settings || {};
@@ -4188,18 +4200,25 @@ function renderPerformance() {
   if (realChk) realChk.checked = state.settings?.showRealNav === true;
   const restoreChk = document.getElementById('restoreOutflowChk');
   if (restoreChk) restoreChk.checked = state.settings?.restoreOutflow === true;
+  const mergeChk = document.getElementById('mergeUnrealChk');
+  if (mergeChk) mergeChk.checked = state.settings?.mergeUnrealized === true;
 
   if (data.length > 0) {
     const ctx1 = document.getElementById('navChart').getContext('2d');
 
     // 黃線：確定淨值序列（勾「還原出金」則把截至該日的累計出金加回去，看沒領錢會長怎樣）
     const restoreOut = state.settings?.restoreOutflow === true;
+    // 合併未實現：把原本藍色虛線那一段直接接到黃線末端，變成一條連續的線
+    // （給不想自己在腦中加總的看圖人；終點＝基金總淨值卡的數字，兩邊就對得起來）
+    const mergeUnreal = state.settings?.mergeUnrealized === true;
     const confirmedData = buildConfirmed(data)
       .map((v, i) => restoreOut ? v + cumOutAt(data[i].date) : v);
+    const lastIdx = confirmedData.length - 1;
+    if (mergeUnreal && lastIdx >= 0) confirmedData[lastIdx] += unrealizedPnL;
 
     // 藍色虛線：倒數第二點跟黃線同高，最後一點加上未實現損益（原始設計）
-    const lastIdx = confirmedData.length - 1;
-    const topData = confirmedData.map((v, i) => {
+    // 合併模式下不再單獨畫這條（已經融進黃線）
+    const topData = mergeUnreal ? null : confirmedData.map((v, i) => {
       if (i === lastIdx - 1) return v; // 倒數第二點與黃線同高
       if (i === lastIdx) return v + unrealizedPnL; // 最後一點往上偏移
       return null; // 其餘不顯示
@@ -4246,7 +4265,8 @@ function renderPerformance() {
         labels: data.map(s=>s.date),
         datasets: [
           {
-            label: restoreOut ? `已確定淨值（還原出金 +${fmtMoney(totalOut)}）` : '已確定淨值（入金＋已實現）',
+            label: mergeUnreal ? `淨值（含未實現 ${fmtMoney(unrealizedPnL)}）`
+              : restoreOut ? `已確定淨值（還原出金 +${fmtMoney(totalOut)}）` : '已確定淨值（入金＋已實現）',
             data: confirmedData,
             borderColor: navColor,
             backgroundColor: gradConfirmed,
@@ -4271,7 +4291,7 @@ function renderPerformance() {
             spanGaps: true,
             order: 2,
           }] : []),
-          {
+          ...(mergeUnreal ? [] : [{
             label: `未實現損益延伸（${fmtMoney(unrealizedPnL)}）`,
             data: topData,
             borderColor: dashColor,
@@ -4284,7 +4304,7 @@ function renderPerformance() {
             tension: 0,
             spanGaps: false,
             order: 0,
-          }
+          }]),
         ]
       },
       options: {
