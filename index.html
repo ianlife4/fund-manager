@@ -2008,7 +2008,8 @@ function computeUnitNav() {
     }
   }
   if (units <= 0 || series.length === 0) return null;
-  return { unitNav, twr: unitNav / 100 - 1, series };
+  // units 一併回傳：高水位要換算成「以目前單位數計的金額」時需要
+  return { unitNav, twr: unitNav / 100 - 1, series, units };
 }
 
 const DEFAULT_COLORS = [
@@ -4181,18 +4182,41 @@ function renderPerformance() {
       .map(s => ({ date: s.date, nav: s.nav }));
     navPoints.push({ date: new Date().toISOString().slice(0,10), nav: fundTotalNav() });
 
-    const navSeries = navPoints.map(p => p.nav + cumOutAt(p.date));
-    // 高水位錨定在「本金(firstDeposit)」：淨值還沒回本(< 本金)就不會假性顯示「創新高」，
-    // 此時 目前回吐 = 離本金多遠(= −累計報酬率)；唯有淨值超過本金、再刷新才算真的創新高。
-    const hwmFloor = firstDeposit > 1 ? firstDeposit : 0;
-    const maxNav = navSeries.length > 0 ? Math.max(hwmFloor, ...navSeries) : Math.max(hwmFloor, fundTotalNav());
-
-    let maxDD = 0, peak = Math.max(hwmFloor, navSeries[0] || 0);
-    navSeries.forEach(v => {
-      if (v > peak) peak = v;
-      const dd = peak > 0 ? (peak - v) / peak * 100 : 0;
-      if (dd > maxDD) maxDD = dd;
-    });
+    // ── 高水位 / 回撤：優先用「單位淨值」序列（GIPS/法人標準）──
+    // 金額淨值會被出入金污染：出金→假回撤、入金→假創新高。單位淨值把金流中性化，
+    // 兩種都自動免疫，也不必再靠「還原出金」補丁。
+    const _un = computeUnitNav();
+    let maxNav, maxDD, curNav, ddBasis;
+    if (_un && _un.series.length > 0) {
+      const us = _un.series.map(p => p.unitNav);
+      const hwmFloorU = 100;                       // 基準 100 = 本金，沒回本就不算創新高
+      const maxU = Math.max(hwmFloorU, ...us);
+      let peakU = Math.max(hwmFloorU, us[0]);
+      maxDD = 0;
+      us.forEach(v => {
+        if (v > peakU) peakU = v;
+        const dd = peakU > 0 ? (peakU - v) / peakU * 100 : 0;
+        if (dd > maxDD) maxDD = dd;
+      });
+      // 換算回金額：以目前單位數計，要回到高水位需要多少淨值
+      maxNav = _un.units * maxU;
+      curNav = fundTotalNav();
+      ddBasis = 'unit';
+    } else {
+      // 沒有入金紀錄 → 退回舊的金額法（至少把出金還原掉）
+      const navSeries = navPoints.map(p => p.nav + cumOutAt(p.date));
+      const hwmFloor = firstDeposit > 1 ? firstDeposit : 0;
+      maxNav = navSeries.length > 0 ? Math.max(hwmFloor, ...navSeries) : Math.max(hwmFloor, fundTotalNav());
+      let peak = Math.max(hwmFloor, navSeries[0] || 0);
+      maxDD = 0;
+      navSeries.forEach(v => {
+        if (v > peak) peak = v;
+        const dd = peak > 0 ? (peak - v) / peak * 100 : 0;
+        if (dd > maxDD) maxDD = dd;
+      });
+      curNav = fundTotalNav() + totalOut;
+      ddBasis = 'amount';
+    }
 
     // 累計報酬率 = (已實現 + 未實現) ÷ 第一筆入金（對初始資金的總回報）
     const totalRet = ((totalRealized + unrealizedPnL) / firstDeposit) * 100;
@@ -4200,10 +4224,9 @@ function renderPerformance() {
     el.textContent = fmtPct(totalRet);
     el.className = 'card-value ' + (totalRet >= 0 ? 'positive' : 'negative');
     document.getElementById('perf_high').textContent = fmtMoney(maxNav);
-    document.getElementById('perf_drawdown').textContent = maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%';
-    // 目前回吐 = 從歷史最高淨值(高水位)回落多少；創新高則顯示提示
-    // 高水位是「還原出金」後的，現值也要還原才同基準，否則出金當下會被誤判成大回吐
-    const curNav = fundTotalNav() + totalOut;
+    document.getElementById('perf_drawdown').innerHTML = (maxDD > 0 ? '-' + maxDD.toFixed(2) + '%' : '0%')
+      + `<span style="font-size:11px;color:var(--text-muted);display:block;margin-top:2px">${ddBasis === 'unit' ? '單位淨值基準·排除金流' : '金額基準·無入金紀錄'}</span>`;
+    // 目前回吐 = 從高水位回落多少（單位淨值基準時，maxNav 與 curNav 已同基準）
     const curDD = maxNav > 0 ? (maxNav - curNav) / maxNav * 100 : 0;
     const curDDEl = document.getElementById('perf_curDD');
     if (curDD < 0.05) {
