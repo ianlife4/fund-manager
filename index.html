@@ -918,12 +918,21 @@ document.addEventListener('DOMContentLoaded', () => {
       <button class="btn btn-gold" onclick="addCashflow()">確認新增</button>
     </div>
 
-    <div class="cards-grid" style="grid-template-columns:repeat(6,1fr)">
+    <div class="cards-grid" style="grid-template-columns:repeat(7,1fr)">
       <div class="card" style="position:relative;overflow:hidden;">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--gold)"></div>
         <div class="card-label">可出金餘額</div>
         <div class="card-value" id="cf_available" style="color:var(--gold)">$0</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="cf_availableNote">淨投入 − 持倉付出成本</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px" id="cf_availableNote">淨投入 ＋ 質押借款 − 付出成本</div>
+      </div>
+      <div class="card readonly-hide" style="position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--up)"></div>
+        <div class="card-label">股票借款（質押）</div>
+        <input type="number" id="cf_pledgeLoan" step="1" inputmode="numeric" placeholder="0"
+          onchange="updatePledgeLoan(this.value)" onblur="updatePledgeLoan(this.value)"
+          onkeydown="if(event.key==='Enter')this.blur()"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--up);border-radius:8px;padding:4px 8px;font-family:var(--mono);font-size:20px;font-weight:700;outline:none;" />
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">抵押持股借出的現金（負債）</div>
       </div>
       <div class="card">
         <div class="card-label">累計入金</div>
@@ -1947,7 +1956,12 @@ function totalRealizedPnL() {
   return (state.realizedPnL || []).reduce((s, r) => s + r.pnl, 0);
 }
 // 現金餘額 = 淨投入資金 - 目前付出成本（花出去買股票的錢）
-function cashBalance() { return netDeposited() - totalCost(); }
+// 股票借款（質押）：把持股抵押給券商借出的現金。帳戶層級的一個數字。
+// 借來的錢會進到「可用現金」，同時是一筆負債 → 對淨值淨影響為 0（借錢不會讓你變有錢），
+// 但少了它，買股花掉的錢會讓現金被算成大負數（ian 曾顯示 −$10,269,422）。
+function pledgeLoanTotal() { return Math.max(0, Number(state.pledgeLoan) || 0); }
+// 現金餘額 = 淨投入資金 + 質押借款 − 目前付出成本
+function cashBalance() { return netDeposited() + pledgeLoanTotal() - totalCost(); }
 // 融資借款總額（負債）：融資部位的全額 - 自付額 = 全額 × marginRate
 function marginLoanTotal() {
   return state.holdings.reduce((s, h) => {
@@ -1956,10 +1970,14 @@ function marginLoanTotal() {
     return s + Math.round(totalAmt * (h.marginRate || 0.6));
   }, 0);
 }
-// 基金總淨值 = 持倉市值 + 現金餘額 − 融資借款（券商欠款是負債）− 融資平倉成本
-// 最後一項與 totalPnL() 同源（賣出手續費+證交稅+融資利息，對齊券商「損益試算」）。
+// 基金總淨值 = 持倉市值 + 現金餘額 − 融資借款 − 質押借款（都是負債）− 融資平倉成本
+// 質押借款同時進了現金、又在這裡扣掉 → 對淨值淨影響 0（借錢不會讓你變有錢），
+// 這是刻意的：它只把「現金」與「負債」分別攤開，不會膨脹淨值。
+// 融資平倉成本與 totalPnL() 同源（賣出手續費+證交稅+融資利息，對齊券商「損益試算」）。
 // 少扣會讓「基金總淨值 ≠ 淨投入資金 + 未實現損益」，績效頁三張卡對不起來。
-function fundTotalNav() { return totalMarketValue() + cashBalance() - marginLoanTotal() - totalMarginNetCost(); }
+function fundTotalNav() {
+  return totalMarketValue() + cashBalance() - marginLoanTotal() - pledgeLoanTotal() - totalMarginNetCost();
+}
 
 // 單位淨值 / 時間加權報酬(TWR)：把入金/出金當成「以當時單位淨值買/賣單位」，
 // 單位淨值只反映操作績效、不被金流墊高（基準 100）。法人標準算法。
@@ -3579,7 +3597,10 @@ function renderCashflow() {
   document.getElementById('cf_netIn').textContent = fmtMoney(netIn);
   document.getElementById('cf_fundNav').textContent = fmtMoney(fundTotalNav());
 
-  // 可出金餘額 = 現金餘額（淨投入 − 持倉付出成本）：錢還沒被買進部位卡住的部分
+  const pledgeEl = document.getElementById('cf_pledgeLoan');
+  if (pledgeEl && document.activeElement !== pledgeEl) pledgeEl.value = pledgeLoanTotal() || '';
+
+  // 可出金餘額 = 現金餘額（淨投入 + 質押借款 − 持倉付出成本）：錢還沒被買進部位卡住的部分
   const avail = cashBalance();
   const availEl = document.getElementById('cf_available');
   const availNoteEl = document.getElementById('cf_availableNote');
@@ -3915,6 +3936,14 @@ function toggleRealNavLine(on) {
   state.settings = state.settings || {};
   state.settings.showRealNav = !!on;
   save(); renderPerformance();
+}
+
+// 股票借款（質押）：帳戶層級的一個數字，改了會連動現金餘額與淨值
+function updatePledgeLoan(val) {
+  if (!ownerOnly()) return;
+  const n = parseFloat(val);
+  state.pledgeLoan = isNaN(n) ? 0 : Math.max(0, n);
+  save(); renderCashflow(); renderOverview();
 }
 
 // 合併未實現：把藍色虛線接進黃線，讓看圖的人不用自己加總（記在該帳戶設定，各帳戶獨立）
