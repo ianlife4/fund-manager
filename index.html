@@ -2897,7 +2897,14 @@ async function preprocessForOCR(file, targetWidth = 3000) {
       i.onerror = () => rej(new Error('圖片載入失敗'));
       i.src = url;
     });
-    const scale = Math.max(1, Math.min(4, targetWidth / (img.naturalWidth || img.width || 1)));
+    // 券商表格字高多半只有 10px 上下，Tesseract 需要 ~30px → 一律至少放大 3 倍。
+    // 舊版用 3000/寬 當倍率，1900px 寬的圖只放大 1.58 倍，遠遠不夠。
+    const w0 = img.naturalWidth || img.width || 1;
+    const h0 = img.naturalHeight || img.height || 1;
+    let scale = Math.max(3, targetWidth / w0);
+    if (w0 * scale > 9000) scale = 9000 / w0;                 // 寬度上限，避免 canvas 過大
+    if (w0 * h0 * scale * scale > 4e7) scale = Math.sqrt(4e7 / (w0 * h0));  // 總像素上限 ~40M
+    scale = Math.max(1, Math.min(5, scale));
     const cv = document.createElement('canvas');
     cv.width = Math.round((img.naturalWidth || img.width) * scale);
     cv.height = Math.round((img.naturalHeight || img.height) * scale);
