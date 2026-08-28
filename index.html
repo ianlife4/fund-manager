@@ -1288,7 +1288,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="section-header" style="margin-bottom:6px;">
       <span class="section-title">多帳戶淨值績效比較</span>
     </div>
-    <div style="font-size:12px;color:var(--text-dim);margin:0 0 10px 2px;">點帳戶加入 ＋／移除比較。預設曲線＝<strong style="color:var(--text)">已確定淨值</strong>（入金＋已實現），與各帳戶「績效曲線」頁的黃線同一條。<span style="color:var(--text-muted)">切「真實(快照)」則改看含未實現市值的快照淨值＝績效頁青色虛線。</span></div>
+    <div style="font-size:12px;color:var(--text-dim);margin:0 0 10px 2px;">點帳戶加入 ＋／移除比較。<strong style="color:var(--text)">含未實現</strong>＝入金＋已實現，終點再加上目前未實現損益（＝該帳戶的基金總淨值，與績效頁勾「合併未實現」同一條）。<span style="color:var(--text-muted)">「已確定」只看入金＋已實現；「真實(快照)」看歷次快照的含市值淨值。</span></div>
     <div id="compareChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
     <div id="compareControls" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;"></div>
     <div id="compareGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;"></div>
@@ -3824,13 +3824,19 @@ let _compareCharts = [];
 let compareView = 'grid';            // 'grid'(格狀) | 'overlay'(疊圖)
 let compareBase = 'abs';             // 'abs'(絕對淨值) | 'base100'(基準100正規化)
 let compareSort = 'default';         // 'default'(帳戶順序) | 'return'(報酬率高→低)
-let compareValBasis = 'confirmed';   // 'confirmed'(已確定淨值=入金+已實現,同績效頁黃線) | 'real'(真實淨值=快照含市值)
+let compareValBasis = 'merged';   // 'confirmed'(已確定淨值=入金+已實現,同績效頁黃線) | 'real'(真實淨值=快照含市值)
 function setCompareView(v){ compareView = v; renderCompare(); }
 function setCompareBase(v){ compareBase = v; renderCompare(); }
 function setCompareSort(v){ compareSort = v; renderCompare(); }
 function setCompareValBasis(v){ compareValBasis = v; renderCompare(); }
 
 // 取帳戶最新資料：當前帳戶用 live state(可能有尚未存回 accounts 的編輯)，其餘用 accounts
+// 暫時把 state 指到指定帳戶來呼叫既有計算函式（totalPnL 等都讀全域 state），算完還原
+function _withAcct(acct, fn) {
+  const s = state;
+  state = _acctData(acct);
+  try { return fn(); } finally { state = s; }
+}
 function _acctData(acct) {
   return (state && acct.id === currentAccountId) ? state : acct;
 }
@@ -3867,6 +3873,14 @@ function accountNavSeries(acct) {
     });
     return { date, nav: sum };
   });
+  // 合併未實現：最後一點加上該帳戶的未實現損益 → 終點＝該帳戶的基金總淨值
+  // （與「績效曲線」頁勾「合併未實現」時同一條線）
+  if (compareValBasis === 'merged' && series.length > 0) {
+    const unreal = _withAcct(acct, () => totalPnL());
+    const last = series[series.length - 1];
+    series[series.length - 1] = { date: last.date, nav: last.nav + unreal };
+    return { series, basis: 'merged', unreal };
+  }
   return { series, basis: 'confirmed' };
 }
 
@@ -3896,7 +3910,7 @@ function renderCompare() {
     const seg = (cur, fn, opts) => `<div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">` +
       opts.map(o => `<button onclick="${fn}('${o.v}')" style="padding:6px 12px;border:none;background:${cur===o.v?'var(--gold)':'transparent'};color:${cur===o.v?'#1a1a1a':'var(--text-dim)'};font-size:12px;cursor:pointer;font-family:var(--sans);font-weight:${cur===o.v?'700':'400'};">${o.t}</button>`).join('') + `</div>`;
     ctrlEl.innerHTML =
-      `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">淨值</span>${seg(compareValBasis,'setCompareValBasis',[{v:'confirmed',t:'已確定'},{v:'real',t:'真實(快照)'}])}</div>` +
+      `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">淨值</span>${seg(compareValBasis,'setCompareValBasis',[{v:'merged',t:'含未實現'},{v:'confirmed',t:'已確定'},{v:'real',t:'真實(快照)'}])}</div>` +
       `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">檢視</span>${seg(compareView,'setCompareView',[{v:'grid',t:'格狀'},{v:'overlay',t:'疊圖'}])}</div>` +
       `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">刻度</span>${seg(compareBase,'setCompareBase',[{v:'abs',t:'絕對淨值'},{v:'base100',t:'基準100'}])}</div>` +
       `<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:11px;color:var(--text-muted);">排序</span>${seg(compareSort,'setCompareSort',[{v:'default',t:'帳戶順序'},{v:'return',t:'報酬率'}])}</div>`;
@@ -3983,7 +3997,7 @@ function renderCompare() {
         <span style="font-weight:700;font-size:15px;color:var(--text);">${s.a.name}</span>
         <span style="font-family:var(--mono);font-size:13px;">${s.series.length ? `${fmtMoney(s.last)} <span class="${signClass(s.ret)}" style="font-size:12px;">${fmtPct(s.ret)}</span>` : '<span style="color:var(--text-muted)">無資料</span>'}</span>
       </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">${s.series.length ? `${s.series.length} 點 · ${s.basis==='snap'?'真實淨值(快照)':'已確定淨值(入金+已實現)'} · ${s.series[0].date}~${s.series[s.series.length-1].date}` : '&nbsp;'}</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">${s.series.length ? `${s.series.length} 點 · ${s.basis==='snap'?'真實淨值(快照)':s.basis==='merged'?'淨值(含未實現)':'已確定淨值(入金+已實現)'} · ${s.series[0].date}~${s.series[s.series.length-1].date}` : '&nbsp;'}</div>
       <div style="height:170px;position:relative;"><canvas id="cmpChart_${s.a.id}"></canvas></div>
     </div>`).join('');
 
