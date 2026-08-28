@@ -2893,8 +2893,16 @@ function parseBrokerData() {
   const result = coreBrokerParse(raw);
 
   if (result.updated + result.added === 0) {
-    resultEl.textContent = '⚠️ 無法解析，請確認格式是否正確';
+    // 只說「無法解析」查不出原因 → 把實際收到的前幾行原文秀出來，一眼看出是不是抓錯內容
+    const esc = t => String(t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    const lines = raw.split(/\r?\n/).filter(l => l.trim()).slice(0, 3);
     resultEl.style.color = '#f26e6e';
+    resultEl.innerHTML = `⚠️ 無法解析，請確認格式是否正確
+      <div style="margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text-muted);font-size:11px;font-family:var(--mono);line-height:1.7;white-space:pre-wrap;word-break:break-all">實際收到的內容（前 ${lines.length} 行）：
+${lines.map(l => esc(l.slice(0, 120))).join('\n')}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+        每一列至少要有：股票代號、庫存股數、成交均價、現價，且「現價 × 股數」要能對上該列的市值。
+      </div>`;
     return;
   }
   save(); renderPortfolio();
