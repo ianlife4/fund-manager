@@ -3006,9 +3006,13 @@ function coreBrokerParse(raw) {
       applyBrokerRow(parsed) ? updated++ : added++;
     } else {
       skipped++;
-      // 含 4~6 位代號 = 疑似持股列，記下來讓使用者知道漏了哪幾檔
-      const t = line.match(/\((\d{4,6})\)|(?:^|[^\d])(\d{4,6})(?=[^\d,.]|$)/);
-      if (t) failed.push({ ticker: t[1] || t[2], line: line.trim().slice(0, 60) });
+      // 疑似持股列才回報（避免把合計列的金額誤認成股票代號）：
+      // 必須有括號代號，或整列出現交易別關鍵字
+      const looksLikeHolding = /\(\d{4,6}\)/.test(line) || /現\s*股|融\s*資|融\s*券|零\s*股|可轉債/.test(line);
+      if (looksLikeHolding) {
+        const t = line.match(/\((\d{4,6})\)|(?:^|[^\d])(\d{4,6})(?=[^\d,.]|$)/);
+        if (t) failed.push({ ticker: t[1] || t[2], line: line.trim().slice(0, 60) });
+      }
     }
   }
   return { updated, added, skipped, failed };
