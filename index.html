@@ -3003,6 +3003,7 @@ function coreBrokerParse(raw) {
   for (const line of lines) {
     if (/小\s*計|合\s*計|總\s*計/.test(line)) { skipped++; continue; }
     if (/類\s*別/.test(line) && /股\s*票/.test(line)) { skipped++; continue; }
+    if ((line.match(/類\s*別|交易別|股\s*[票飄評]\s*(?:代號|名稱)|即時庫存|庫存股數|昨日餘額|成本均價|成交均價|付出成本|投資成本|損益試算|資產市值|報酬率|獲利率|漲跌幅|持股比例|融資金額|擔保品|保證金/g) || []).length >= 3) { skipped++; continue; }
 
     let parsed = null;
     // 方法1：tab 分隔（從券商網站直接複製）
@@ -3025,11 +3026,12 @@ function coreBrokerParse(raw) {
       skipped++;
       const looksLikeHolding = /[（(]\s*\d{4,6}[A-Z]?/.test(line) || /現\s*[股骰]|融\s*資|融\s*券|零\s*股|可轉債/.test(line);
       if (looksLikeHolding) {
-        const t = line.match(/[（(]\s*(\d{4,6}[A-Z]?)|(?:^|[^\dA-Z])(\d{4,6}[A-Z]?)(?=[^\dA-Z,.]|$)/);
-        if (t) failed.push({ ticker: t[1] || t[2], line: line.trim().slice(0, 100) });
-        else unparsed.push(line.trim().slice(0, 100));
+        const t = line.match(/[（(]\s*(\d{4,6}[A-Z]?)|(?:^|[^\dA-Z\-.,])(\d{4,6}[A-Z]?)(?=\s+[^\d\s%.,\-]|$)/);
+        const compact = line.replace(/\s+/g, ' ').trim().slice(0, 100);
+        if (t) failed.push({ ticker: t[1] || t[2], line: compact });
+        else unparsed.push(compact);
       } else if ((line.match(/-?\d[\d,]*\.?\d*/g) || []).length >= 4 && !/類\s*別|股\s*票\s*名\s*稱/.test(line)) {
-        unparsed.push(line.trim().slice(0, 100));
+        unparsed.push(line.replace(/\s+/g, ' ').trim().slice(0, 100));
       }
     }
   }
@@ -3099,7 +3101,7 @@ function parseTabRow(cols) {
   cellStr.replace(/(-?\d[\d,]*\.?\d*)(\s*%)?/g, (m0, n, pc) => { cellPct.push(!!pc); return m0; });
   if (cellNums.length < 3) return null;
 
-  const solved = solveHoldingRow(cellNums, cellPct, { margin: tradeType === '融資' });
+  const solved = solveWithVariants(cellNums, cellPct, { margin: tradeType === '融資' });
   if (!solved) return null;
   if (String(solved.shares) === tn.ticker) return null;
   const est = (solved.pnl != null && solved.totalCost > 0) ? Math.round(solved.totalCost + solved.pnl) : Math.round(solved.mv);
@@ -3142,6 +3144,8 @@ function solveHoldingRow(nums, pctFlags, opts) {
   const unitOk = c => c.kind !== 'mul';
   const totalOk = c => c.kind !== 'div' && isInt(c.val);
   const twoDec = v => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6;
+  // 賣出稅費上限：證交稅 0.3% ＋ 手續費 max(20, 0.1425%)（融資再加 1% 利息）
+  const maxFeeOf = M => M * 0.003 + Math.max(20, M * 0.001425) + (margin ? M * 0.01 : 0);
   // 所有在容差內的總額候選，依（位移少、距離近）排序
   const nearTotalAll = (target, tol, used, minIdx) => {
     const out = [];
@@ -3153,6 +3157,21 @@ function solveHoldingRow(nums, pctFlags, opts) {
     return out.sort((a, b) => a.shift - b.shift || a.d - b.d);
   };
   const nearTotal = (target, tol, used, minIdx) => nearTotalAll(target, tol, used, minIdx)[0] || null;
+  // 市值：精確（現價×股數 四捨五入到整數，容差 0.51）；找不到再找「淨值型」＝市值扣掉賣出稅費
+  //（有些券商只顯示「現值＝淨值」，沒有毛額市值欄）→ 落在 [毛額−最大稅費−1, 毛額−1]，且必為整數、未位移
+  const findMV = (gross, used, minIdx) => {
+    const exact = nearTotal(gross, 0.51, used, minIdx);
+    if (exact) return Object.assign(exact, { net: false });
+    const fee = maxFeeOf(gross);
+    let best = null;
+    for (const c of cands) {
+      if (c.shift > 0 || !totalOk(c) || c.idx <= minIdx || used.has(c.idx)) continue;
+      if (c.val < gross - fee - 1 || c.val > gross - 1) continue;
+      const d = gross - c.val;
+      if (!best || d < best.d) best = { idx: c.idx, val: c.val, shift: 0, d, net: true };
+    }
+    return best;
+  };
   // 融資：自備款＋融資金額 兩個整數 token 相加 ≈ target
   const nearSplit = (target, tol, used, minIdx) => {
     let best = null;
@@ -3163,13 +3182,11 @@ function solveHoldingRow(nums, pctFlags, opts) {
     }
     return best;
   };
-  // 損益試算 ＝ 毛利 − 賣出稅費（有的券商不扣 → 等於毛利）。所以是「單邊窗口」：
-  //   token ∈ [ (M−T) − 最大稅費 − 1 ,  (M−T) + 1 ]，最大稅費 ＝ 證交稅 0.3% ＋ 手續費 max(20, 0.1425%)（融資再加 1% 利息）
-  // 單邊窗口讓「均價/現價對調」的解（毛利正負相反）幾乎不可能對上損益 → 近損平列不再對調
-  // 損益一定是整數、且排在現價/市值/均價/付出成本之後（所有券商皆然）
-  const findPnl = (M, T, used, minIdx) => {
+  // 損益試算 ＝ 毛利 − 賣出稅費（有的券商不扣 → 等於毛利；市值本身已是淨值時 → 等於 淨值−成本）
+  // 單邊窗口：token ∈ [ (M−T) − 最大稅費 − 1 ,  (M−T) + 1 ]；損益一定是整數、且排在已用欄位之後
+  const findPnl = (M, T, used, minIdx, mvNet) => {
     const diff = M - T;
-    const maxFee = M * 0.003 + Math.max(20, M * 0.001425) + (margin ? M * 0.01 : 0);
+    const maxFee = mvNet ? 1 : maxFeeOf(M);
     let best = null;
     for (let i = minIdx + 1; i < N; i++) {
       if (used.has(i) || isPct(i) || !Number.isInteger(nums[i])) continue;
@@ -3188,6 +3205,7 @@ function solveHoldingRow(nums, pctFlags, opts) {
   const bigEnough = v => v >= 0.1 * maxTok;
   // 值等於股數的其他 token（昨日餘額 / 可用餘額 / 今買成）不可當單價或總額
   const sameAsShares = (S, si) => { const s = new Set(); nums.forEach((v, i) => { if (i !== si && v === S) s.add(i); }); return s; };
+  const zeroCount = si => { let n = 0; for (let i = si + 1; i < N; i++) if (nums[i] === 0 && !isPct(i)) n++; return n; };
   let best = null;
 
   // ── 階段 A：股數、現價、市值、均價、付出成本全部都是讀到的 token ──
@@ -3196,40 +3214,53 @@ function solveHoldingRow(nums, pctFlags, opts) {
     const ban = sameAsShares(S, si);
     for (const P of cands) {
       if (!unitOk(P) || P.idx <= si || ban.has(P.idx) || P.val < 0.01 || P.val > 20000) continue;
-      // 市值＝現價×股數 精確（四捨五入到整數）→ 容差 0.51；且市值一定排在現價之後
-      const M = nearTotal(P.val * S, 0.51, new Set([P.idx, ...ban]), si);
-      if (!M || M.idx < P.idx || M.val < P.val || !bigEnough(M.val)) continue;
-      const base = 100 - 2 * (P.shift + M.shift) + (si === shareIdxs[0] ? 6 : 0);
+      const M = findMV(P.val * S, new Set([P.idx, ...ban]), si);
+      if (!M || M.val < P.val || !bigEnough(M.val)) continue;
+      // 市值通常排在現價之後（+1）；淨值型市值 −3
+      const base = 100 - 2 * (P.shift + M.shift) + (si === shareIdxs[0] ? 6 : 0) + (M.idx > P.idx ? 1 : 0) - (M.net ? 3 : 0);
+      const maxFeeM = maxFeeOf(M.val);
       let bestC = null;
       for (const C of cands) {
         if (!unitOk(C) || C.idx <= si || ban.has(C.idx) || C.idx === P.idx || C.idx === M.idx) continue;
         if (C.val < P.val * 0.05 || C.val > P.val * 20) continue;
         const used0 = new Set([P.idx, M.idx, C.idx, ...ban]);
-        // 付出成本 ≈ 均價×股數：只差手續費（≤0.1425%，最低 20 元）與均價四捨五入 → 0.25% 內
-        const tol = Math.max(20, C.val * S * 0.0025);
+        // 付出成本 ≈ 均價×股數：只差手續費（≤0.1425%）與均價四捨五入 → 0.25% 內（下限 2 元；
+        // 不用 20 元下限：小部位時讀壞的數字會在 20 元內冒充付出成本）
+        const tol = Math.max(2, C.val * S * 0.0025);
         let Ts = nearTotalAll(C.val * S, tol, used0, si);
         if (!Ts.length && margin) { const sp = nearSplit(C.val * S, tol, used0, si); if (sp) Ts = [sp]; }
         if (!Ts.length) continue;
         // 「淨值」＝市值 − 賣出稅費 → 落在 [市值 − 最大稅費, 市值) 這個窄帶；常冒充付出成本
-        // （窄帶用稅費上限而非 1%：小賺不到 1% 的真實付出成本不該被當成淨值扣分）
-        const maxFeeM = M.val * 0.003 + Math.max(20, M.val * 0.001425);
-        const isNetLike = T => T.val < M.val && T.val >= M.val - maxFeeM - 1;
+        const isNetLike = T => !M.net && T.val < M.val && T.val >= M.val - maxFeeM - 1;
         const T = Ts.find(x => !isNetLike(x)) || Ts[0];
         const netLike = isNetLike(T);
         const usedCT = new Set([si, P.idx, M.idx, C.idx, T.idx]);
         if (T.idx2 != null) usedCT.add(T.idx2);
         const afterAll = Math.max(si, P.idx, M.idx, C.idx, T.idx, T.idx2 == null ? -1 : T.idx2);
-        const pnl = findPnl(M.val, T.val, usedCT, afterAll);
-        if (netLike && !(pnl && pnl.gap >= 1)) continue;   // 淨值型只有損益也吻合才收（且不是剛好等於毛利）
-        // 損益吻合（單邊窗口）是強訊號 → +5：足以勝過「零位移但沒有損益佐證」的對調解
+        const pnl = findPnl(M.val, T.val, usedCT, afterAll, M.net);
+        if (netLike && !(pnl && pnl.gap >= 1)) continue;
+        if (M.net && !pnl) continue;   // 淨值型市值一定要有損益佐證（損益＝淨值−成本 必須剛好對上）
+        // 市值排在現價前面（少見版面）→ 也要損益佐證；零股時「均價×股數」與付出成本只差 <0.5，
+        // 會被當成精確市值形成對調解，而對調解的損益對不上
+        if (M.idx < P.idx && !pnl) continue;
         const sc = 10 - 2 * (C.shift + T.shift) + (C.idx < P.idx ? 1 : 0) + (pnl ? 5 : 0) - (netLike ? 5 : 0);
         if (!bestC || sc > bestC.sc) bestC = { C, T, pnl, sc };
       }
-      if (!bestC) continue;
+      if (!bestC) {
+        // 成本為 0 的持股（配股 / 移轉入庫）：列中至少兩個 0，且損益 ＝ 市值（淨值）
+        if (zeroCount(si) >= 2) {
+          const pnl = findPnl(M.val, 0, new Set([si, P.idx, M.idx, ...ban]), Math.max(si, P.idx, M.idx), M.net);
+          if (pnl && [P, M].filter(c => c.shift > 0).length <= 1) {
+            const score = base - 20;
+            if (!best || score > best.score) best = { score, shares: S, price: P.val, mv: M.val, cost: 0, totalCost: 0, pnl: pnl.val, mvNet: !!M.net, derived: '付出成本為 0' };
+          }
+        }
+        continue;
+      }
       if ([P, M, bestC.C, bestC.T].filter(c => c.shift > 0).length > 2) continue;
       const score = base + bestC.sc;
       if (!best || score > best.score) {
-        best = { score, shares: S, price: P.val, mv: M.val, cost: bestC.C.val, totalCost: bestC.T.val, pnl: bestC.pnl ? bestC.pnl.val : null };
+        best = { score, shares: S, price: P.val, mv: M.val, cost: bestC.C.val, totalCost: bestC.T.val, pnl: bestC.pnl ? bestC.pnl.val : null, mvNet: !!M.net };
       }
     }
   }
@@ -3241,18 +3272,18 @@ function solveHoldingRow(nums, pctFlags, opts) {
     const ban = sameAsShares(S, si);
     for (const P of cands) {
       if (P.shift > 0 || !unitOk(P) || P.idx <= si || ban.has(P.idx) || P.val < 0.01 || P.val > 20000) continue;
-      const M = nearTotal(P.val * S, 0.51, new Set([P.idx, ...ban]), si);
-      if (!M || M.shift > 0 || M.idx < P.idx || M.val < P.val || !bigEnough(M.val)) continue;
+      const M = findMV(P.val * S, new Set([P.idx, ...ban]), si);
+      if (!M || M.shift > 0 || M.val < P.val || !bigEnough(M.val)) continue;
       const cs = [];
       for (const C of cands) {
         if (C.shift > 0 || !unitOk(C) || C.idx <= si || ban.has(C.idx) || C.idx === P.idx || C.idx === M.idx || !twoDec(C.val)) continue;
         if (C.val < P.val * 0.05 || C.val > P.val * 20) continue;
-        const pnl = findPnl(M.val, C.val * S, new Set([si, P.idx, M.idx, C.idx, ...ban]), Math.max(si, P.idx, M.idx, C.idx));
+        const pnl = findPnl(M.val, C.val * S, new Set([si, P.idx, M.idx, C.idx, ...ban]), Math.max(si, P.idx, M.idx, C.idx), M.net);
         if (pnl) cs.push({ C, pnl });
       }
       if (cs.length !== 1) continue;
-      const score = 55 + (si === shareIdxs[0] ? 6 : 0);
-      if (!best || score > best.score) best = { score, shares: S, price: P.val, mv: M.val, cost: cs[0].C.val, totalCost: 0, pnl: cs[0].pnl.val, derived: '無付出成本欄，均價以損益驗證' };
+      const score = 55 + (si === shareIdxs[0] ? 6 : 0) - (M.net ? 3 : 0);
+      if (!best || score > best.score) best = { score, shares: S, price: P.val, mv: M.val, cost: cs[0].C.val, totalCost: 0, pnl: cs[0].pnl.val, mvNet: !!M.net, derived: '無付出成本欄，均價以損益驗證' };
     }
   }
   if (best) return best;
@@ -3263,7 +3294,7 @@ function solveHoldingRow(nums, pctFlags, opts) {
     const ban = sameAsShares(S, si);
     for (const C of cands) {
       if (C.shift > 0 || !unitOk(C) || C.idx <= si || ban.has(C.idx) || C.val < 0.01 || C.val > 20000) continue;
-      const T = nearTotal(C.val * S, Math.max(20, C.val * S * 0.0025), new Set([C.idx, ...ban]), si);
+      const T = nearTotal(C.val * S, Math.max(2, C.val * S * 0.0025), new Set([C.idx, ...ban]), si);
       if (!T || T.shift > 0) continue;
       const after = Math.max(C.idx, T.idx);
       let pick = null;
@@ -3271,7 +3302,7 @@ function solveHoldingRow(nums, pctFlags, opts) {
         if (M.shift > 0 || !totalOk(M) || M.idx <= after || ban.has(M.idx) || M.val < T.val * 0.2 || M.val > T.val * 5 || !bigEnough(M.val)) continue;
         const P = M.val / S;
         if (P < 0.01 || !twoDec(P)) continue;
-        const pnl = findPnl(M.val, T.val, new Set([si, C.idx, T.idx, M.idx, ...ban]), Math.max(si, C.idx, T.idx, M.idx));
+        const pnl = findPnl(M.val, T.val, new Set([si, C.idx, T.idx, M.idx, ...ban]), Math.max(si, C.idx, T.idx, M.idx), false);
         if (!pnl || pnl.gap < 1) continue;   // gap<1 ＝ 這個 M 是淨值/預估收入，不是市值
         if (!pick || M.val > pick.M.val) pick = { M, P, pnl };
       }
@@ -3283,7 +3314,6 @@ function solveHoldingRow(nums, pctFlags, opts) {
   if (best) return best;
 
   // ── 階段 C：股數讀壞（0 00 / no 還）→ 股數＝付出成本÷均價（須為整數），再以市值÷股數、損益雙重驗證 ──
-  // 該列第一個數字永遠是股數 → 均價/付出成本都不可能是第 0 個 token
   for (const C of cands) {
     if (C.shift > 0 || C.idx === 0 || !unitOk(C) || C.val < 0.01 || C.val > 20000) continue;
     for (const T of cands) {
@@ -3298,7 +3328,7 @@ function solveHoldingRow(nums, pctFlags, opts) {
         if (M.shift > 0 || !totalOk(M) || M.idx <= after || M.idx === C.idx || M.idx === T.idx || !bigEnough(M.val)) continue;
         const P = M.val / Sr;
         if (P < 0.01 || !twoDec(P) || P < C.val * 0.2 || P > C.val * 5) continue;
-        const pnl = findPnl(M.val, T.val, new Set([C.idx, T.idx, M.idx]), Math.max(C.idx, T.idx, M.idx));
+        const pnl = findPnl(M.val, T.val, new Set([C.idx, T.idx, M.idx]), Math.max(C.idx, T.idx, M.idx), false);
         if (!pnl || pnl.gap < 1) continue;
         if (!pick || M.val > pick.M.val) pick = { M, P, pnl };
       }
@@ -3320,7 +3350,7 @@ function solveHoldingRow(nums, pctFlags, opts) {
       for (const C of cands) {
         if (C.shift > 0 || !unitOk(C) || C.idx <= si || ban.has(C.idx) || C.idx === P.idx || !twoDec(C.val)) continue;
         if (C.val < P.val * 0.05 || C.val > P.val * 20) continue;
-        const pnl = findPnl(P.val * S, C.val * S, new Set([si, P.idx, C.idx, ...ban]), Math.max(si, P.idx, C.idx));
+        const pnl = findPnl(P.val * S, C.val * S, new Set([si, P.idx, C.idx, ...ban]), Math.max(si, P.idx, C.idx), false);
         if (pnl) sols.push({ P, C, pnl: pnl.val });
       }
     }
@@ -3331,6 +3361,42 @@ function solveHoldingRow(nums, pctFlags, opts) {
   }
   return best;
 }
+
+/* 「整列小數點被吃掉」變體：有些券商每個數字格都顯示兩位小數（362,805.00 / 1,820.00），
+   OCR 常把整列的小數點與千分位都吃掉 → 所有金額一致放大 100 倍。
+   訊號：百分比 token 超過 100%（漲跌幅 -161%、持股比例 3378% 都不可能）。
+   變體：股數（第一個 token 與同值 token）不動，其餘 ≥100 的整數一律 ÷100；之後仍須通過全部恆等式。 */
+function decimalDroppedVariant(nums, pctFlags) {
+  if (!nums || nums.length < 3) return null;
+  const first = nums[0];
+  let changed = 0;
+  const out = nums.map((v, i) => {
+    if (i === 0 || v === first) return v;
+    if (Number.isInteger(v) && Math.abs(v) >= 100) { changed++; return v / 100; }
+    return v;
+  });
+  return changed >= 3 ? out : null;
+}
+function looksDecimalDropped(nums, pctFlags) {
+  // 「整數」且 >100 的百分比（-161% / 3378%）才算：帶小數的 122.22% 表示 OCR 沒吃掉小數點
+  return !!(pctFlags && nums.some((v, i) => pctFlags[i] && Number.isInteger(v) && Math.abs(v) > 100));
+}
+
+/* 先照原樣解；解不出（或訊號顯示整列小數點被吃掉）再試 ÷100 變體。變體解一律標註請核對 */
+function solveWithVariants(nums, pctFlags, opts) {
+  const dropped = decimalDroppedVariant(nums, pctFlags);
+  const order = (dropped && looksDecimalDropped(nums, pctFlags)) ? ['dropped', 'raw'] : ['raw', 'dropped'];
+  for (const mode of order) {
+    if (mode === 'raw') { const r = solveHoldingRow(nums, pctFlags, opts); if (r) return r; }
+    else if (dropped) {
+      const r = solveHoldingRow(dropped, pctFlags, opts);
+      if (r) { r.derived = (r.derived ? r.derived + '；' : '') + '整列小數點被吃掉，已 ÷100 還原'; return r; }
+    }
+  }
+  return null;
+}
+
+
 
 /* 從 tab 分隔的儲存格找代號＋名稱：支援「6921 名稱」「名稱(6921)」「6921」「名稱」分兩格 */
 function extractTickerName(cells) {
@@ -3423,7 +3489,7 @@ function parseSpaceRow(lineRaw) {
   const pctFlags = [];
   afterStr.replace(/(-?\d[\d,]*\.?\d*)(\s*%)?/g, (m0, n, pc) => { pctFlags.push(!!pc); return m0; });
 
-  const solved = solveHoldingRow(nums, pctFlags, { margin: tradeType === '融資' });
+  const solved = solveWithVariants(nums, pctFlags, { margin: tradeType === '融資' });
   if (!solved) return null;
   if (String(solved.shares) === ticker) return null;   // 安全網：股數被當成代號
   const est = (solved.pnl != null && solved.totalCost > 0) ? Math.round(solved.totalCost + solved.pnl) : Math.round(solved.mv);
@@ -3576,7 +3642,8 @@ function ocrTickerRows(lines) {
   for (const l of lines) {
     if (/類\s*別/.test(l.text) && /股\s*票/.test(l.text)) continue;
     const pm = l.text.match(/[（(]\s*(\d{4,6}[A-Z]?)/);
-    const sm = pm ? null : l.text.match(/(?:^|[^\dA-Z])(\d{4,6}[A-Z]?)(?=[^\dA-Z,.]|$)/);
+    // 獨立代號：前面不能是 - . , 數字，後面不能接 % . , 數字，且要緊接一個非數字的名稱 token
+    const sm = pm ? null : l.text.match(/(?:^|[^\dA-Z\-.,])(\d{4,6}[A-Z]?)(?=\s+[^\d\s%.,\-][^\s]*\s)/);
     const m = pm || sm;
     if (!m) continue;
     const ticker = m[1];
@@ -3678,7 +3745,7 @@ async function ocrAndParse() {
       runOcrPass(preBin, 'chi_tra+eng', CHI_PARAMS, setProg('第 1 輪（中文）')),
       runOcrPass(preBin, 'eng', DIGIT_PARAMS, null),
     ]);
-    window.__ocrDebug = { p1: p1.lines.map(l => l.text), p2: p2.lines.map(l => l.text), synth: [] };
+    window.__ocrDebug = { p1: p1.lines.map(l => l.text), p2: p2.lines.map(l => l.text), synth: [], text1: (p1.text || '').split(/\n/).filter(l => l.trim()) };
     let text1 = (p1.text || '').trim();
     if (!text1) {
       statusEl.textContent = '前處理無結果，改用原圖辨識…';
@@ -3702,6 +3769,18 @@ async function ocrAndParse() {
     const importedSet = () => { const s = new Set(); total.rows.forEach(r => { s.add(r.ticker); if (r.srcTicker) s.add(r.srcTicker); }); return s; };
     const tickerRows = ocrTickerRows(p1.lines);
     const stillMissing = () => { const s = importedSet(); return tickerRows.filter(r => !s.has(r.ticker)); };
+    // 中文輪把代號讀壞（7610 → 10、7926 → 926）但看得出是持股列（有交易別、數字很多）：
+    // 代號改從數字輪同一列取，並要求與中文輪的殘缺數字尾碼吻合、或名稱對上既有持倉，才敢用
+    const tickerY = new Set(tickerRows.map(r => r.y0 + ':' + r.y1));
+    const noTickerRows = p1.lines.filter(l => !tickerY.has(l.y0 + ':' + l.y1)
+      && /現\s*[股骰]|融\s*資|融\s*券|零\s*股/.test(l.text)
+      && (l.text.match(/-?\d[\d,]*\.?\d*/g) || []).length >= 4).map(l => {
+        let tradeType = '現股';
+        if (/融\s*資/.test(l.text)) tradeType = '融資'; else if (/融\s*券/.test(l.text)) tradeType = '融券'; else if (/期\s*貨/.test(l.text)) tradeType = '期貨';
+        const nm = l.text.replace(/^[^\u4e00-\u9fffA-Za-z]*/, '').match(/(?:現股|融資|融券|零股|現骰)?\s*[\d\-\s.]*([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9\-]{1,11})/);
+        const frag = (l.text.match(/(?:^|\s)(\d{1,5})(?=\s)/g) || []).map(x => x.trim());
+        return { tradeType, name: nm ? nm[1] : '', frags: frag, y0: l.y0, y1: l.y1, text: l.text, done: false };
+      });
 
     // 後續輪：只補「第 1 輪有代號、但沒匯入」的列。代號用第 1 輪的，數字用該輪同一列的
     const tryPass = (passLines, label) => {
@@ -3716,12 +3795,31 @@ async function ocrAndParse() {
         const r = coreBrokerParse(synth);
         if (r.updated + r.added > 0) { merge({ ...r, skipped: 0, failed: [], unparsed: [] }); got++; }
       }
+      // 中文輪沒代號的持股列：代號從數字輪來
+      for (const row of noTickerRows) {
+        if (row.done) continue;
+        const ln = ocrOverlapLine(passLines, row);
+        if (!ln) continue;
+        const toks = ln.text.split(/\s+/).filter(Boolean);
+        const cand = toks.slice(0, 3).map(t => (t.match(/^-?(\d{4,6}[A-Z]?)$/) || [])[1]).find(Boolean);
+        if (!cand) continue;
+        const nameHit = row.name && state.holdings.some(h => h.tradeType === row.tradeType && h.ticker === cand && String(h.name || '').replace(/\s+/g, '') === row.name.replace(/\s+/g, ''));
+        const fragHit = row.frags.some(f => f.length >= 2 && cand.endsWith(f) && f !== cand);
+        if (!nameHit && !fragHit) continue;
+        const i = ln.text.indexOf(cand);
+        const nums = ln.text.slice(i + cand.length).replace(/^[)）\s]+/, '');
+        const synth = `${row.tradeType} ${row.name || 'X'}(${cand}) ${nums}`;
+        if (window.__ocrDebug) window.__ocrDebug.synth.push(label + '(補代號): ' + synth);
+        const r = coreBrokerParse(synth);
+        if (r.updated + r.added > 0) { merge({ ...r, skipped: 0, failed: [], unparsed: [] }); got++; row.done = true; }
+      }
       if (got) console.log(`[OCR] ${label} 補回 ${got} 檔`);
     };
-    if (stillMissing().length) { statusEl.textContent = '第 2 輪：純數字比對…'; tryPass(p2.lines, '第 2 輪'); }
+    const pending = () => stillMissing().length + noTickerRows.filter(r => !r.done).length;
+    if (pending()) { statusEl.textContent = '第 2 輪：純數字比對…'; tryPass(p2.lines, '第 2 輪'); }
 
     // 第 3/4 輪：灰階（不二值化）再辨識一次，細筆畫的字在二值化後常消失
-    if (stillMissing().length && !bigImage) {
+    if (pending() && !bigImage) {
       statusEl.textContent = '第 3 輪：灰階重辨識…';
       const preGray = await preprocessForOCR(screenshotFile, 3000, { gray: true });
       const [p3, p4] = await Promise.all([
@@ -3729,8 +3827,8 @@ async function ocrAndParse() {
         runOcrPass(preGray, 'eng', DIGIT_PARAMS, null),
       ]);
       if (window.__ocrDebug) { window.__ocrDebug.p3 = p3.lines.map(l => l.text); window.__ocrDebug.p4 = p4.lines.map(l => l.text); }
-      if (stillMissing().length) tryPass(p3.lines, '第 3 輪');
-      if (stillMissing().length) tryPass(p4.lines, '第 4 輪');
+      if (pending()) tryPass(p3.lines, '第 3 輪');
+      if (pending()) tryPass(p4.lines, '第 4 輪');
     }
 
     // 收尾：「沒抓到」只留最後仍沒匯入的代號，去重
@@ -3738,6 +3836,14 @@ async function ocrAndParse() {
     const seenF = new Set();
     total.failed = total.failed.filter(f => !imp.has(f.ticker) && (seenF.has(f.ticker) ? false : (seenF.add(f.ticker), true)));
     stillMissing().forEach(r => { if (!seenF.has(r.ticker)) { seenF.add(r.ticker); total.failed.push({ ticker: r.ticker, line: r.text.slice(0, 100) }); } });
+    // 後續輪已救回的「認不出代號」列 → 從第 1 輪的 unparsed 清單移除；仍沒救回的才留著
+    // 比對鍵：壓縮空白後取前 60 字（第 1 輪 unparsed 存的是原始行切 100 字，空白數不同切點會跑掉）
+    const key = t => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    // 第 1 輪就正常解出、只是代號偵測沒認出（如「_7942 .東佑吉」）的列 → 文字含已匯入代號 → 視為完成
+    noTickerRows.forEach(r => { if (!r.done && [...imp].some(tk => r.text.includes(tk))) r.done = true; });
+    const recovered = new Set(noTickerRows.filter(r => r.done).map(r => key(r.text)));
+    total.unparsed = total.unparsed.filter(u => !recovered.has(key(u)));
+    noTickerRows.filter(r => !r.done).forEach(r => { if (!total.unparsed.some(u => key(u) === key(r.text))) total.unparsed.push(String(r.text).replace(/\s+/g, ' ').trim().slice(0, 100)); });
 
     statusEl.textContent = '辨識完成，正在解析資料...';
     if (total.updated + total.added === 0) {
@@ -3750,8 +3856,9 @@ async function ocrAndParse() {
       save(); renderPortfolio();
       resultEl.style.color = '#4ecdc4';
       resultEl.innerHTML = `✅ 完成！更新 ${total.updated} 筆，新增 ${total.added} 筆` + (total.skipped ? `，跳過 ${total.skipped} 行` : '') + brokerRowsHtml(total.rows) + brokerFailedHtml(total.failed, total.unparsed);
-      statusEl.textContent = total.failed.length ? `辨識完成，${total.failed.length} 檔沒抓到（見下方）` : '辨識並更新成功';
-      statusEl.style.color = total.failed.length ? '#f5a623' : '#4ecdc4';
+      const missN = total.failed.length + total.unparsed.length;
+      statusEl.textContent = missN ? `辨識完成，${missN} 列沒抓到（見下方）` : '辨識並更新成功';
+      statusEl.style.color = missN ? '#f5a623' : '#4ecdc4';
       toast(`截圖辨識匯入：更新${total.updated} 新增${total.added}`);
     }
   } catch (err) {
