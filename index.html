@@ -2953,7 +2953,7 @@ ${lines.map(l => esc(l.slice(0, 120))).join('\n')}</div>
   }
   save(); renderPortfolio();
   resultEl.style.color = '#4ecdc4';
-  resultEl.innerHTML = `✅ 完成！更新 ${result.updated} 筆，新增 ${result.added} 筆` + (result.skipped ? `，跳過 ${result.skipped} 行` : '') + brokerFailedHtml(result.failed);
+  resultEl.innerHTML = `✅ 完成！更新 ${result.updated} 筆，新增 ${result.added} 筆` + (result.skipped ? `，跳過 ${result.skipped} 行` : '') + brokerRowsHtml(result.rows) + brokerFailedHtml(result.failed);
   document.getElementById('brokerPaste').value = '';
   toast(`券商資料已匯入：更新${result.updated} 新增${result.added}`);
 }
@@ -2965,6 +2965,8 @@ ${lines.map(l => esc(l.slice(0, 120))).join('\n')}</div>
 function ocrNormalizeLine(line) {
   return line
     .replace(/\((\d{4,6})(?![\d)])/g, '($1)')   // 右括號被讀成 》】〉 或整個消失
+    // 「0」與後面的數黏在一起：0304.634 → 0 304.634（今賣成 0 與付出成本 304,634 黏成一個 token）
+    .replace(/(?<![\d.,\-\/])0+(?=[1-9])/g, '0 ')
     // 千分位逗號被讀成小數點，可能連續多組：2.994.494 → 2994494、1.070.00 → 1070.00
     // （小數部分若為 1~2 位會被保留，台股單價幾乎不會有 3 位小數）
     .replace(/(?<![\d.])(\d{1,3})((?:\.\d{3})+)(?!\d)/g, (mm, a, b) => a + b.replace(/\./g, ''));
@@ -2985,6 +2987,7 @@ function coreBrokerParse(raw) {
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
   let updated = 0, added = 0, skipped = 0;
   const failed = [];   // 看起來是持股列、但解析不出來的（OCR 讀壞）→ 回報給使用者手動補
+  const rows = [];     // 成功匯入的明細（回饋給使用者對照）
 
   for (const line of lines) {
     // 跳過小計、合計、總計、表頭
@@ -3010,7 +3013,9 @@ function coreBrokerParse(raw) {
     }
 
     if (parsed) {
-      applyBrokerRow(parsed) ? updated++ : added++;
+      const isUpd = applyBrokerRow(parsed);
+      isUpd ? updated++ : added++;
+      rows.push({ ticker: parsed.ticker, name: parsed.name, shares: parsed.shares, cost: parsed.cost, price: parsed.price, totalCost: parsed.totalCost || 0, action: isUpd ? '更新' : '新增' });
     } else {
       skipped++;
       // 疑似持股列才回報（避免把合計列的金額誤認成股票代號）：
@@ -3022,7 +3027,7 @@ function coreBrokerParse(raw) {
       }
     }
   }
-  return { updated, added, skipped, failed };
+  return { updated, added, skipped, failed, rows };
 }
 
 /* Tab 分隔解析（14欄格式） */
@@ -3032,8 +3037,9 @@ function parseTabRow(cols) {
   if (!rawName || rawType === '類別' || rawName === '股票名稱') return null;
   if (rawName === '合計' || rawName === '小計') return null;
 
-  const nameMatch = rawName.match(/^(\d{4,6})\s*(.+)/);
-  if (!nameMatch) return null;
+  const tn = extractTickerName(cols);
+  if (!tn) return null;
+  const nameMatch = [null, tn.ticker, tn.name];
 
   let tradeType = '現股';
   if (rawType.includes('融資')) tradeType = '融資';
@@ -3050,11 +3056,28 @@ function parseTabRow(cols) {
     if (m) return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares: Math.abs(shares), cost: m.cost, price: m.price, totalCost: 0, estIncome: m.est, nameClean: true };
   }
 
-  const cost = parseFloat(cols[8].replace(/,/g, ''));
-  const price = parseFloat(cols[9].replace(/,/g, ''));
-  if (isNaN(shares) || isNaN(cost) || isNaN(price)) return null;
-
-  return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares, cost, price, nameClean: true };
+  // 固定欄位（國票 14 欄）：只有在「現價×股數」真的能在該列找到市值時才信它，
+  // 否則換一家券商、欄位順序不同，會把錯的數字直接匯進去。
+  const cellStr = cols.slice(2).join(' ');
+  const cellNums = (cellStr.match(/-?\d[\d,]*\.?\d*/g) || [])
+    .map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+  const cellPct = [];
+  cellStr.replace(/(-?\d[\d,]*\.?\d*)(\s*%)?/g, (m0, n, pc) => { cellPct.push(!!pc); return m0; });
+  const cost = cols[8] != null ? parseFloat(cols[8].replace(/,/g, '')) : NaN;
+  const price = cols[9] != null ? parseFloat(cols[9].replace(/,/g, '')) : NaN;
+  if (!isNaN(shares) && !isNaN(cost) && !isNaN(price) && shares > 0 && price > 0) {
+    const mv = price * shares;
+    if (cellNums.some(v => Math.abs(v - mv) <= Math.max(1, shares * 0.006))) {
+      return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares, cost, price, nameClean: true };
+    }
+  }
+  // 版面不同的券商 → 恆等式求解
+  const solved = solveHoldingRow(cellNums, cellPct);
+  if (solved) {
+    const est = (solved.pnl != null) ? Math.round(solved.totalCost + solved.pnl) : Math.round(solved.mv);
+    return { tradeType, ticker: nameMatch[1], name: nameMatch[2].trim(), shares: solved.shares, cost: solved.cost, price: solved.price, totalCost: solved.totalCost, estIncome: est, nameClean: true };
+  }
+  return null;
 }
 
 /* 融資/券「未實現損益」畫面專用：用「現價×股數 = 股票市值」當錨點，
@@ -3089,6 +3112,119 @@ function parseMarginRow(nums, shares) {
   return { cost, price, est };
 }
 
+/* ── 恆等式求解（版面無關）──
+   舊法靠「第幾欄是什麼」猜，每換一家券商、或 OCR 少讀一欄，整排就錯位。
+   新法把該列所有數字當成一袋候選值，找出「同時滿足券商恆等式」的那一組：
+     ① 現價 × 股數 ＝ 資產市值        （精確：容差 max(1, 股數×0.6%)）
+     ② 成本均價 × 股數 ≈ 付出成本     （含手續費：容差 0.8%）
+     ③ 市值 − 付出成本 ≈ 損益試算     （加分項，非必要）
+   每個數字另備「小數點被 OCR 吃掉」(÷10 ÷100) 與「千分位被讀成小數點」(×10 ×100 ×1000) 的位移變體，
+   變體一樣要通過恆等式才會被採用 → 猜錯不會過關。
+   ①②都成立才回傳；只滿足一條寧可回 null（該列回報「沒抓到」），也不匯入錯數字。 */
+function solveHoldingRow(nums, pctFlags) {
+  const N = nums.length;
+  if (N < 3) return null;
+  const isPct = i => !!(pctFlags && pctFlags[i]);
+  // 候選值。位移方向必須合理：
+  //   單價(現價/均價) 只會「小數點被吃掉」→ 整數 ÷10 ÷100        (kind 'div')
+  //   總額(市值/成本) 只會「千分位被讀成小數點」→ 小數 ×10 ×100 ×1000 (kind 'mul')
+  //   反方向的變體不產生 → 報酬率 49.27 不會被 ×10 當成均價
+  const cands = [];
+  nums.forEach((v, idx) => {
+    if (!(v > 0) || isPct(idx)) return;
+    cands.push({ idx, val: v, shift: 0, kind: 'raw' });
+    if (Number.isInteger(v)) {
+      cands.push({ idx, val: v / 10, shift: 1, kind: 'div' });
+      cands.push({ idx, val: v / 100, shift: 2, kind: 'div' });
+    } else {
+      cands.push({ idx, val: v * 10, shift: 1, kind: 'mul' });
+      cands.push({ idx, val: v * 100, shift: 2, kind: 'mul' });
+      cands.push({ idx, val: v * 1000, shift: 3, kind: 'mul' });
+    }
+  });
+  const unitOk = c => c.kind !== 'mul';
+  const totalOk = c => c.kind !== 'div';
+  // 找最接近 target 的總額候選（優先位移少的）；只看股數之後的 token，且排除已用掉的
+  const nearTotal = (target, tol, used, minIdx) => {
+    let best = null;
+    for (const c of cands) {
+      if (!totalOk(c) || c.idx <= minIdx || used.has(c.idx)) continue;
+      const d = Math.abs(c.val - target);
+      if (d > tol) continue;
+      if (!best || c.shift < best.shift || (c.shift === best.shift && d < best.d)) best = { idx: c.idx, val: c.val, shift: c.shift, d };
+    }
+    return best;
+  };
+  const shareIdxs = [];
+  nums.forEach((v, i) => { if (v > 0 && v <= 5e7 && Number.isInteger(v) && !isPct(i)) shareIdxs.push(i); });
+  let best = null;
+  for (const si of shareIdxs) {
+    const S = nums[si];
+    for (const P of cands) {
+      // 結構性限制（所有券商皆然）：股數在單價與總額之前
+      // → 擋掉「442.27×700」與「7×44227」這種乘積相同的對稱解
+      if (!unitOk(P) || P.idx <= si || P.val < 0.01 || P.val > 20000) continue;
+      const M = nearTotal(P.val * S, Math.max(1, S * 0.006), new Set([P.idx]), si);
+      if (!M || M.val < P.val) continue;
+      let score = 100 - 2 * (P.shift + M.shift) + (si === shareIdxs[0] ? 6 : 0) + (M.idx > P.idx ? 1 : 0);
+      let bestC = null;
+      for (const C of cands) {
+        if (!unitOk(C) || C.idx <= si || C.idx === P.idx || C.idx === M.idx) continue;
+        if (C.val < P.val * 0.05 || C.val > P.val * 20) continue;
+        // 付出成本 ≈ 均價×股數（含手續費，0.5% 內）
+        const T = nearTotal(C.val * S, Math.max(2, C.val * S * 0.005), new Set([P.idx, M.idx, C.idx]), si);
+        if (!T) continue;
+        const sc = 10 - 2 * (C.shift + T.shift) + (C.idx < P.idx ? 1 : 0);
+        if (!bestC || sc > bestC.sc) bestC = { C, T, sc };
+      }
+      if (!bestC) continue;
+      score += bestC.sc;
+      const used = new Set([si, P.idx, M.idx, bestC.C.idx, bestC.T.idx]);
+      const diff = M.val - bestC.T.val;
+      // 損益試算：容差取「手續費上限(市值0.6%)」與「相對 40%」較嚴者，避免小數字誤配
+      const pnlTol = Math.max(3, Math.min(M.val * 0.006, Math.abs(diff) * 0.4));
+      let pnl = null;
+      for (let i = si + 1; i < N; i++) {
+        if (used.has(i) || isPct(i)) continue;
+        if (Math.abs(nums[i] - diff) <= pnlTol) { pnl = nums[i]; score += 3; break; }
+      }
+      if (!best || score > best.score) {
+        best = { score, shares: S, price: P.val, mv: M.val, cost: bestC.C.val, totalCost: bestC.T.val, pnl };
+      }
+    }
+  }
+  return best;
+}
+
+/* 從 tab 分隔的儲存格找代號＋名稱：支援「6921 名稱」「名稱(6921)」「6921」「名稱」分兩格 */
+function extractTickerName(cells) {
+  for (let i = 0; i < Math.min(cells.length, 4); i++) {
+    const c = (cells[i] || '').trim();
+    let m = c.match(/^(\d{4,6})\s*(.*)$/);
+    if (m && m[2]) return { ticker: m[1], name: m[2].trim() };
+    m = c.match(/^(.*?)\s*[（(](\d{4,6})[)）]\s*$/);
+    if (m) return { ticker: m[2], name: m[1].trim() || m[2] };
+    if (/^\d{4,6}$/.test(c)) {
+      const nxt = (cells[i + 1] || '').trim();
+      return { ticker: c, name: (nxt && !/^[\d,.\-%]+$/.test(nxt)) ? nxt : c };
+    }
+  }
+  return null;
+}
+
+/* 匯入結果明細：讓使用者一眼對照券商畫面 */
+function brokerRowsHtml(rows) {
+  if (!rows || rows.length === 0) return '';
+  const esc = t => String(t == null ? '' : t).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const f = n => (n == null || isNaN(n) || n === 0) ? '—' : Number(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+  const th = (t, r) => `<th style="text-align:${r ? 'right' : 'left'};padding:2px 10px 4px 0;font-weight:500">${t}</th>`;
+  const td = (t, r) => `<td style="text-align:${r ? 'right' : 'left'};padding:2px 10px 2px 0">${t}</td>`;
+  return `<div style="margin-top:8px;overflow-x:auto"><table style="font-size:11px;font-family:var(--mono);border-collapse:collapse;white-space:nowrap;color:var(--text)">
+    <tr style="color:var(--text-muted)">${th('代號')}${th('股數', 1)}${th('均價', 1)}${th('現價', 1)}${th('付出成本', 1)}${th('市值', 1)}${th('')}</tr>
+    ${rows.map(r => `<tr>${td(`${esc(r.ticker)} <span style="color:var(--text-muted)">${esc(r.name)}</span>`)}${td(f(r.shares), 1)}${td(f(r.cost), 1)}${td(f(r.price), 1)}${td(f(r.totalCost), 1)}${td(f(r.shares * r.price), 1)}${td(`<span style="color:var(--text-muted)">${r.action}</span>`)}</tr>`).join('')}
+  </table><div style="font-size:11px;color:var(--text-muted);margin-top:4px">請對照券商畫面確認；有誤可在上方持倉表直接改。</div></div>`;
+}
+
 /* 空格 / OCR 分隔解析 */
 function parseSpaceRow(line) {
   let ticker = '';
@@ -3116,7 +3252,8 @@ function parseSpaceRow(line) {
     afterStr = afterTicker.substring(firstNumMatch.index);
   }
   // 去掉名稱前面誤黏的交易類別字（融資/現股/融券…），只留純股名
-  name = name.replace(/^(現股|融資|融券|現沖|零股|期貨|資買|資賣|券買|券賣)+/, '').trim();
+  name = name.replace(/^(現股|融資|融券|現沖|零股|期貨|資買|資賣|券買|券賣)+/, '')
+    .replace(/^[。．.·、,"“”'|｜\s]+|[。．.·、,"“”'|｜\s]+$/g, '').trim();   // OCR 雜訊
   if (!name) name = ticker;
 
   // 判斷類別（整行搜尋）
@@ -3130,16 +3267,27 @@ function parseSpaceRow(line) {
   if (!numMatches) return null;
   const nums = numMatches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
   if (nums.length < 3) return null;
+  // 哪些 token 後面跟著 %（報酬率）→ 求解時排除，永遠不可能是股數/單價/總額
+  const pctFlags = [];
+  afterStr.replace(/(-?\d[\d,]*\.?\d*)(\s*%)?/g, (m0, n, pc) => { pctFlags.push(!!pc); return m0; });
 
   const shares = Math.abs(nums[0]);
-  if (shares <= 0) return null;
 
-  // ── 融資：未實現損益畫面欄位順序與現股不同，改用專用錨點解析 ──
-  if (tradeType === '融資') {
+  // ── 融資：未實現損益畫面「付出成本」是自備款，恆等式②不成立 → 先走專用錨點 ──
+  if (tradeType === '融資' && shares > 0) {
     const m = parseMarginRow(nums, shares);
     if (m) return { tradeType, ticker, name, shares, cost: m.cost, price: m.price, totalCost: 0, estIncome: m.est, nameClean: false };
-    // 解析不到就 fall through 用通用邏輯（至少不比現在差）
   }
+
+  // ── 恆等式求解（版面無關）：解得出來就不必靠欄位位置猜 ──
+  const solved = solveHoldingRow(nums, pctFlags);
+  if (solved) {
+    const est = (solved.pnl != null) ? Math.round(solved.totalCost + solved.pnl) : Math.round(solved.mv);
+    return { tradeType, ticker, name, shares: solved.shares, cost: solved.cost, price: solved.price, totalCost: solved.totalCost, estIncome: est, nameClean: false };
+  }
+
+  // ── 以下：舊的位置式解析，當最後備援 ──
+  if (shares <= 0) return null;
 
   let cost = 0, price = 0, totalCost = 0, priceIdx = -1;
   let costIdx = -1;
@@ -3433,7 +3581,7 @@ async function ocrAndParse() {
     } else {
       save(); renderPortfolio();
       resultEl.style.color = '#4ecdc4';
-      resultEl.innerHTML = `✅ 完成！更新 ${parseResult.updated} 筆，新增 ${parseResult.added} 筆` + (parseResult.skipped ? `，跳過 ${parseResult.skipped} 行` : '') + brokerFailedHtml(parseResult.failed);
+      resultEl.innerHTML = `✅ 完成！更新 ${parseResult.updated} 筆，新增 ${parseResult.added} 筆` + (parseResult.skipped ? `，跳過 ${parseResult.skipped} 行` : '') + brokerRowsHtml(parseResult.rows) + brokerFailedHtml(parseResult.failed);
       statusEl.textContent = '辨識並更新成功';
       statusEl.style.color = '#4ecdc4';
       toast(`截圖辨識匯入：更新${parseResult.updated} 新增${parseResult.added}`);
