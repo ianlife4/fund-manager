@@ -2143,7 +2143,7 @@ function renderLive() {
     <div class="card"><div class="card-label">即時市值</div><div class="card-value" style="color:var(--gold)">${fmtMoney(d.total_mv || 0)}</div><div class="card-change" style="color:var(--text-muted);font-size:11px">現股 ${d.positions.length} 檔</div></div>
     <div class="card"><div class="card-label">即時損益</div><div class="card-value ${signClass(d.total_pnl || 0)}">${fmtMoney(d.total_pnl || 0)}</div><div class="card-change ${signClass(d.total_pnl_pct || 0)}">${fmtPct(Number(d.total_pnl_pct) || 0)}</div></div>
     <div class="card"><div class="card-label">交割戶餘額</div><div class="card-value">${bank.balance != null ? fmtMoney(bank.balance) : '—'}</div><div class="card-change" style="color:var(--text-muted);font-size:11px">${bank.balance_ts ? '銀行 ' + String(bank.balance_ts).slice(5, 16) : ''}</div></div>
-    <div class="card"><div class="card-label">全部交割後餘額</div><div class="card-value" style="color:${isFinite(after) && after < 0 ? 'var(--up)' : 'var(--gold)'}">${isFinite(after) ? fmtMoney(after) : '—'}</div><div class="card-change" style="color:${isFinite(after) && after < 0 ? 'var(--up)' : 'var(--text-muted)'};font-size:11px">${isFinite(after) && after < 0 ? '⚠ 不足，要補 ' + fmtMoney(-after) : '餘額＋未交割款'}</div></div>`;
+    <div class="card"><div class="card-label">可打款項（扣完交割）</div><div class="card-value" style="color:${isFinite(after) && after < 0 ? 'var(--up)' : 'var(--gold)'}">${isFinite(after) ? fmtMoney(after) : '—'}</div><div class="card-change" style="color:${(bank.shortfall || (isFinite(after) && after < 0)) ? 'var(--up)' : 'var(--text-muted)'};font-size:11px">${bank.shortfall ? '⚠ ' + String(bank.shortfall.date).slice(5) + ' 差 ' + fmtMoney(bank.shortfall.amount) + '，要匯入' : (isFinite(after) && after < 0 ? '⚠ 不足，要補 ' + fmtMoney(-after) : '餘額＋明後天應收付，負數＝違約交割')}</div></div>`;
   const th = 'padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text-dim);font-weight:500;text-align:right;';
   const td = 'padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;';
   document.getElementById('liveTable').innerHTML =
@@ -2157,9 +2157,10 @@ function renderLive() {
       <td style="${td}">${fmtMoney(p.mv || 0)}</td>
       <td style="${td}" class="${signClass(p.pnl || 0)}">${fmtMoney(p.pnl || 0)}</td>
       <td style="${td}" class="${signClass(Number(p.pnl_pct) || 0)}">${fmtPct(Number(p.pnl_pct) || 0)}</td></tr>`).join('');
+  const settleLabel = s => (Number(s.T) === 0 ? '今日已交割' : Number(s.T) === 1 ? '明天' : Number(s.T) === 2 ? '後天' : `T+${s.T}`);
   document.getElementById('liveBank').innerHTML = settle.length
-    ? '未交割款：' + settle.map(s => `<span style="margin-right:14px">T+${s.T} ${String(s.date).slice(5)} <span class="${signClass(Number(s.amount) || 0)}" style="font-family:var(--mono)">${(Number(s.amount) || 0) >= 0 ? '+' : ''}${fmtMoney(Number(s.amount) || 0)}</span></span>`).join('')
-      + '<br><span style="color:var(--text-muted)">正數＝賣出款會入帳，負數＝買進款要扣；損益已扣預估賣出費稅。持倉每天 18:30 另行同步。</span>'
+    ? '交割：' + settle.map(s => `<span style="margin-right:14px;${Number(s.T) === 0 ? 'opacity:.6' : ''}">${settleLabel(s)} ${String(s.date).slice(5)} <span class="${signClass(Number(s.amount) || 0)}" style="font-family:var(--mono)">${(Number(s.amount) || 0) >= 0 ? '+' : ''}${fmtMoney(Number(s.amount) || 0)}</span></span>`).join('')
+      + '<br><span style="color:var(--text-muted)">當天的收付早上就已反映在交割戶餘額裡；「可打款項」＝餘額＋明天＋後天應收付，正數＝賣出款會入帳，負數＝買進款要扣。損益已扣預估賣出費稅。持倉每天 18:30 另行同步。</span>'
     : '';
 }
 
