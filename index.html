@@ -710,6 +710,13 @@ document.addEventListener('DOMContentLoaded', () => {
           <table id="liveTable" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;white-space:nowrap;"></table>
         </div>
         <div id="liveBank" style="margin-top:12px;font-size:12px;color:var(--text-dim);line-height:1.9;"></div>
+        <!-- 試算：想買多少（含全額交割股預收款），買完可打剩多少／要先匯多少。純前端計算，不寫任何資料；放在 liveBank 外面才不會被每次更新清掉 -->
+        <div id="liveTry" style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text-dim);">
+          <span>試算：今天想買</span>
+          <input id="liveTryAmt" type="number" inputmode="numeric" placeholder="金額（全額交割股預收款也算）" oninput="liveTryCalc()"
+            style="width:220px;max-width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:13px;outline:none;" />
+          <span id="liveTryOut" style="font-family:var(--mono);font-weight:700;"></span>
+        </div>
       </div>
     </div>
 
@@ -2162,6 +2169,21 @@ function renderLive() {
     ? '交割：' + settle.map(s => `<span style="margin-right:14px;${Number(s.T) === 0 ? 'opacity:.6' : ''}">${settleLabel(s)} ${String(s.date).slice(5)} <span class="${signClass(Number(s.amount) || 0)}" style="font-family:var(--mono)">${(Number(s.amount) || 0) >= 0 ? '+' : ''}${fmtMoney(Number(s.amount) || 0)}</span></span>`).join('')
       + '<br><span style="color:var(--text-muted)">當天的收付早上就已反映在交割戶餘額裡；「可打款項」＝餘額＋明天＋後天應收付，正數＝賣出款會入帳，負數＝買進款要扣。損益已扣預估賣出費稅。持倉每天 18:30 另行同步。</span>'
     : '';
+  liveTryCalc();
+}
+
+function liveTryCalc() {
+  const out = document.getElementById('liveTryOut'), inp = document.getElementById('liveTryAmt');
+  if (!out || !inp) return;
+  const d = _liveData, avail = d && d.bank ? Number(d.bank.after_settle) : NaN;
+  const amt = Number(inp.value);
+  if (!isFinite(avail) || !inp.value || !isFinite(amt) || amt <= 0) { out.textContent = ''; return; }
+  const left = avail - amt;
+  if (left >= 0) {
+    out.innerHTML = `<span style="color:var(--down)">可以買，買完可打還剩 ${fmtMoney(left)}</span>`;
+  } else {
+    out.innerHTML = `<span style="color:var(--up)">不夠，要先匯 ${fmtMoney(-left)} 進交割戶，不然會違約交割</span>`;
+  }
 }
 
 function renderOverview() {
