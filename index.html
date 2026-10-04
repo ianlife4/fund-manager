@@ -4996,7 +4996,8 @@ function renderPerformance() {
             g.font = '700 11px sans-serif';
             g.textAlign = 'right';
             g.fillStyle = unrealizedPnL >= 0 ? '#f26e6e' : '#3ecf8e';
-            g.fillText(txt, last.x - 8, last.y - 12);
+            // 終點貼著圖頂時改標在點的下方，免得被切掉
+            g.fillText(txt, last.x - 8, last.y - 12 < 12 ? last.y + 18 : last.y - 12);
           }
         }
         g.restore();
