@@ -1094,9 +1094,12 @@ document.addEventListener('DOMContentLoaded', () => {
           <input type="color" id="navChartColor" value="#c9a84c"
             style="width:28px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px;padding:0;"
             onchange="updateNavChartColor(this.value)" />
-          <button class="btn btn-outline btn-sm" onclick="setChartRange('all')">全部</button>
-          <button class="btn btn-outline btn-sm" onclick="setChartRange(12)">近12筆</button>
-          <button class="btn btn-outline btn-sm" onclick="setChartRange(4)">近4筆</button>
+          <button class="btn btn-outline btn-sm" data-range="all" onclick="setChartRange('all')">全部</button>
+          <button class="btn btn-outline btn-sm" data-range="6m" onclick="setChartRange('6m')" title="近半年">6m</button>
+          <button class="btn btn-outline btn-sm" data-range="3m" onclick="setChartRange('3m')" title="近 3 個月">3m</button>
+          <button class="btn btn-outline btn-sm" data-range="1m" onclick="setChartRange('1m')" title="近 1 個月">1m</button>
+          <button class="btn btn-outline btn-sm" data-range="12" onclick="setChartRange(12)">近12筆</button>
+          <button class="btn btn-outline btn-sm" data-range="4" onclick="setChartRange(4)">近4筆</button>
         </div>
       </div>
       <div class="section-body">
@@ -4920,9 +4923,25 @@ function renderPerformance() {
     }
   }
 
-  // ── 套用時間範圍
+  // ── 套用時間範圍：數字＝近 N 筆；'1m'/'3m'/'6m'＝近 N 個月（多留截止日前一點當起點，線才有頭）
   let data = chartData;
-  if (chartRange !== 'all') data = chartData.slice(-chartRange);
+  if (chartRange !== 'all') {
+    if (typeof chartRange === 'number') {
+      data = chartData.slice(-chartRange);
+    } else {
+      const months = parseInt(chartRange, 10) || 1;
+      const cutD = new Date(); cutD.setMonth(cutD.getMonth() - months);
+      const cut = cutD.toISOString().slice(0, 10);
+      const idx = chartData.findIndex(pt => pt.date >= cut);
+      data = idx <= 0 ? chartData : chartData.slice(idx - 1);
+    }
+  }
+  document.querySelectorAll('[data-range]').forEach(b => {
+    const on = String(b.dataset.range) === String(chartRange);
+    b.style.background = on ? 'var(--gold)' : '';
+    b.style.color = on ? '#1a1a1a' : '';
+    b.style.borderColor = on ? 'var(--gold)' : '';
+  });
 
   // ── Chart 1: 淨值曲線（黃線 + 上方填充區域）
   const existingNav = Chart.getChart(document.getElementById('navChart'));
