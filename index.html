@@ -978,6 +978,20 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
 
+    <!-- 誰的出入金：純閱讀的簡表，只看入金/出金，可切換投資人；不含已實現/股息/手續費，也不能在這裡編輯 -->
+    <div class="section" id="cfLedger" style="margin-bottom:24px;">
+      <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span class="section-title">誰的出入金</span>
+        <div id="cfLedgerChips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+      </div>
+      <div class="section-body">
+        <div class="cards-grid" id="cfLedgerCards" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px;"></div>
+        <div class="table-wrap">
+          <table id="cfLedgerTable" style="width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;"></table>
+        </div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-header">
         <span class="section-title">出入金明細</span>
@@ -4173,7 +4187,55 @@ function deleteHolding(id) {
 // ════════════════════════════════════════════
 // CASHFLOW
 // ════════════════════════════════════════════
+// ══════════ 誰的出入金（純閱讀簡表）══════════
+let _cfLedgerWho = 'all';
+function setCfLedgerWho(id) { _cfLedgerWho = id; renderCfLedger(); }
+function renderCfLedger() {
+  const chips = document.getElementById('cfLedgerChips');
+  if (!chips) return;
+  const invs = state.investors || [];
+  const opts = [{ id: 'all', name: '全部' }, ...invs.map(i => ({ id: i.id, name: i.name })), { id: '', name: '未指定' }];
+  if (!opts.some(o => o.id === _cfLedgerWho)) _cfLedgerWho = 'all';
+  // 不用 btn-gold / btn-outline：唯讀模式那兩個 class 會被藏起來或鎖住，而這裡純閱讀本來就該能切
+  chips.innerHTML = opts.map(o => `<button class="btn btn-sm" style="font-size:12px;${_cfLedgerWho === o.id ? 'background:var(--gold);color:#1a1a1a;border-color:var(--gold);' : 'background:transparent;color:var(--text-dim);border:1px solid var(--border);'}" onclick="setCfLedgerWho('${o.id}')">${o.name}</button>`).join('');
+  const nameOf = id => (invs.find(i => i.id === id) || {}).name || '—';
+  const rows = (state.cashflows || [])
+    .filter(c => (c.type === '入金' || c.type === '出金') && (_cfLedgerWho === 'all' || (c.person || '') === _cfLedgerWho))
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
+  let tin = 0, tout = 0;
+  rows.forEach(c => { if (c.type === '入金') tin += Number(c.amount) || 0; else tout += Number(c.amount) || 0; });
+  const net = tin - tout;
+  const inv = invs.find(i => i.id === _cfLedgerWho);
+  const pool = _cfLedgerWho === 'all' ? invs.reduce((s, i) => s + (Number(i.contractPool) || 0), 0) : (inv ? (Number(inv.contractPool) || 0) : null);
+  const diff = pool != null ? net - pool : null;
+  const card = (label, val, color) => `<div class="card" style="padding:10px 12px;"><div class="card-label">${label}</div><div class="card-value" style="font-size:18px;${color ? 'color:' + color : ''}">${val}</div></div>`;
+  document.getElementById('cfLedgerCards').innerHTML =
+    card('累計入金', fmtMoney(tin), 'var(--blue)') +
+    card('累計出金', fmtMoney(tout), '#f59e0b') +
+    card('淨投入', fmtMoney(net), 'var(--gold)') +
+    (pool != null ? card('協議本金', fmtMoney(pool)) + card('淨投入－協議', (diff >= 0 ? '+' : '') + fmtMoney(diff), diff < 0 ? 'var(--up)' : 'var(--down)') : '');
+  const th = 'padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text-dim);font-weight:500;text-align:left;';
+  const td = 'padding:6px 8px;border-bottom:1px solid var(--border);';
+  let run = 0;
+  document.getElementById('cfLedgerTable').innerHTML = rows.length
+    ? `<tr><th style="${th}">日期</th><th style="${th}">誰</th><th style="${th}">類型</th><th style="${th}text-align:right">金額</th><th style="${th}text-align:right">累計淨投入</th><th style="${th}">備註</th></tr>` +
+      rows.map(c => {
+        const amt = Number(c.amount) || 0;
+        run += c.type === '入金' ? amt : -amt;
+        return `<tr>
+          <td style="${td}font-family:var(--mono)">${c.date}</td>
+          <td style="${td}">${nameOf(c.person)}</td>
+          <td style="${td}"><span class="badge ${c.type === '入金' ? 'badge-green' : 'badge-red'}">${c.type}</span></td>
+          <td style="${td}text-align:right;font-family:var(--mono)" class="${c.type === '入金' ? 'positive' : 'negative'}">${c.type === '入金' ? '+' : '-'}${fmtMoney(amt)}</td>
+          <td style="${td}text-align:right;font-family:var(--mono);color:var(--gold)">${fmtMoney(run)}</td>
+          <td style="${td}color:var(--text-dim);white-space:normal;min-width:160px">${(c.note || '').replace(/</g, '&lt;')}</td>
+        </tr>`;
+      }).join('')
+    : `<tr><td style="${td}color:var(--text-muted)">沒有入金／出金紀錄</td></tr>`;
+}
+
 function renderCashflow() {
+  renderCfLedger();
   // Populate person dropdown
   const sel = document.getElementById('cf_person');
   const curVal = sel.value;
