@@ -3511,6 +3511,10 @@ function extractTickerName(cells) {
     if (!c) continue;
     let m = c.match(/^(\d{4,6}[A-Z]?)\s+([^\d.,%\s].*)$/);
     if (m) return { ticker: m[1], name: m[2].trim(), endIdx: i + 1 };
+    // 代號與名稱黏在一起（國票：7924TLC-KY、5483中美晶、00631L元大台灣50正2）：
+    // 代號後的單一大寫字母只有在「後面不是另一個字母」時才算代號的一部分，否則整段字母是名稱（7924T 曾被誤當代號、整列丟掉）
+    m = c.match(/^(\d{4,6}(?:[A-Z](?![A-Za-z]))?)([A-Za-z一-鿿][^\s]*.*)$/);
+    if (m) return { ticker: m[1], name: m[2].trim(), endIdx: i + 1 };
     m = c.match(/^(.*?)\s*[（(](\d{4,6}[A-Z]?)[)）]\s*$/);
     if (m) return { ticker: m[2], name: m[1].trim() || m[2], endIdx: i + 1 };
     if (/^\d{4,6}[A-Z]?$/.test(c)) {
@@ -3554,7 +3558,7 @@ function parseSpaceRow(lineRaw) {
   } else {
     // 格式A：獨立代號 — "[現股] 6921 名稱 1,000 ..."。代號後必須緊接「非數字的名稱」，
     // 否則那個 4~6 位數是股數（無代號的券商 App 列），不是代號
-    const re = /(?:^|[^\dA-Z])(\d{4,6}[A-Z]?)(?=[^\dA-Z,.]|$)/g;
+    const re = /(?:^|[^\dA-Z])(\d{4,6}(?:[A-Z](?![A-Za-z]))?)(?=[^\d,.]|$)/g;   // 同上：7924TLC-KY → 代號 7924、名稱 TLC-KY
     let m;
     while ((m = re.exec(line))) {
       const tIdx = m.index + m[0].indexOf(m[1]);
@@ -4995,7 +4999,7 @@ function renderPerformance() {
         labels: data.map(s=>s.date),
         datasets: [
           {
-            label: mergeUnreal ? `淨值（含未實現 ${fmtMoney(unrealizedPnL)}）`
+            label: mergeUnreal ? '淨值（含未實現）'
               : restoreOut ? `已確定淨值（還原出金 +${fmtMoney(totalOut)}）` : '已確定淨值（入金＋已實現）',
             data: confirmedData,
             borderColor: navColor,
