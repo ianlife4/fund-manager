@@ -4988,18 +4988,7 @@ function renderPerformance() {
             g.fillText('▼ 出金', meta.data[i].x, meta.data[i].y + 20);
           }
         });
-        // 合併未實現時，把未實現金額標在線的終點旁（圖例不再帶金額，改放這裡）
-        if (mergeUnreal && meta.data.length) {
-          const last = meta.data[meta.data.length - 1];
-          if (last && isFinite(last.x) && isFinite(last.y)) {
-            const txt = `含未實現 ${unrealizedPnL >= 0 ? '+' : ''}${fmtMoney(unrealizedPnL)}`;
-            g.font = '700 11px sans-serif';
-            g.textAlign = 'right';
-            g.fillStyle = unrealizedPnL >= 0 ? '#f26e6e' : '#3ecf8e';
-            // 終點貼著圖頂時改標在點的下方，免得被切掉
-            g.fillText(txt, last.x - 8, last.y - 12 < 12 ? last.y + 18 : last.y - 12);
-          }
-        }
+        // 使用者不要曲線上出現數字：未實現金額只放在上方「未實現損益」卡片，圖例也不帶金額
         g.restore();
       }
     };
